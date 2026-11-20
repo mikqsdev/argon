@@ -1,0 +1,104 @@
+/* ════════════════════════ shared M3 components ════════════════════════ */
+
+/* menus float above dialogs (selects inside modals) */
+.pop { z-index: 75; }
+.save-hint { z-index: 90; }
+
+/* user chip: name with a small subtitle below */
+.user-chip .who { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; gap: 2px; }
+.user-chip .who .n { font: 600 14px var(--font); }
+.user-chip .who .p { font: 400 11.5px var(--font); color: var(--on-surface-variant); letter-spacing: 0.2px; }
+
+/* provider favicon inside the tonal badge (initials stay as fallback) */
+.pbadge { position: relative; overflow: hidden; }
+.pbadge img { position: absolute; inset: 18%; width: 64%; height: 64%; object-fit: contain; opacity: 0; transition: opacity var(--fast); border-radius: 3px; }
+.pbadge.has-icon img { opacity: 1; }
+.pbadge.has-icon .pl { opacity: 0; }
+.pbadge.has-icon { background: var(--surface-highest); }
+.pbadge.lg { width: 40px; height: 40px; border-radius: 14px; font-size: 14px; }
+
+/* M3 select: filled menu button replacing native <select> */
+select.m3-native { display: none !important; }
+.m3-select {
+	display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; height: 44px; padding: 0 8px 0 14px;
+	background: var(--surface-highest); color: var(--on-surface); border-radius: var(--r-s); text-align: left; cursor: pointer;
+	box-shadow: inset 0 -2px 0 transparent; transition: border-radius var(--med) var(--spring), box-shadow var(--fast), background var(--fast);
+}
+.m3-select:hover { background: color-mix(in srgb, var(--on-surface) 6%, var(--surface-highest)); }
+.m3-select:focus-visible, .m3-select[aria-expanded="true"] { box-shadow: inset 0 0 0 2px var(--primary); border-radius: var(--r-m); }
+.m3-select .v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 14px var(--font); }
+.m3-select .caret { color: var(--on-surface-variant); font-size: 24px; transition: transform var(--med) var(--spring); }
+.m3-select:active .caret { transform: translateY(2px); }
+.m3-select:disabled { opacity: 0.5; cursor: default; }
+.m3-select.w { width: 280px; } .m3-select.s { width: 130px; } .m3-select.full { width: 100%; }
+.ei-opts .m3-select { width: 100%; height: 40px; }
+.list-item .m3-select { max-width: 220px; }
+.select-menu { max-width: 420px; padding: 6px; }
+.select-menu .sel-list { max-height: 50vh; overflow-y: auto; }
+.select-menu .opt { min-height: 40px; }
+.msearch.sm { height: 40px; margin-bottom: 6px; }
+.msearch.sm input { font-size: 14px; }
+
+/* settings → providers: favicon logos */
+.prov .pbadge.lg { flex: none; }
+
+/* GitHub card */
+.gh-card { display: flex; align-items: center; gap: 14px; padding: 16px 20px; }
+.gh-card .av { width: 48px; height: 48px; border-radius: 40% 60% 55% 45% / 50% 45% 55% 50%; background: var(--surface-highest) center / cover; flex: none; display: grid; place-items: center; color: var(--on-surface-variant); }
+.gh-card .grow { flex: 1; min-width: 0; }
+.gh-card b { font: 600 16px var(--font); }
+.gh-card small { display: block; color: var(--on-surface-variant); }
+
+/* Create PR button next to the changes */
+.pr-btn { height: 30px; padding: 0 12px; border-radius: var(--r-full); background: var(--primary); color: var(--on-primary); font: 600 12.5px var(--font); display: inline-flex; align-items: center; gap: 4px; transition: border-radius var(--med) var(--spring), opacity var(--fast); }
+.pr-btn .ms { font-size: 16px; }
+.pr-btn:hover:not(:disabled) { border-radius: var(--r-s); }
+.pr-btn:disabled { background: color-mix(in srgb, var(--on-surface) 12%, transparent); color: color-mix(in srgb, var(--on-surface) 40%, transparent); cursor: not-allowed; }
+.rp-changes { display: flex; align-items: center; gap: 8px; }
+.rp-changes .stats { margin-left: auto; font-family: var(--mono); font-size: 12px; }
+.pr-list a { color: var(--primary); text-decoration: none; font-size: 12.5px; display: flex; gap: 6px; align-items: center; padding: 3px 0; }
+.pr-files { max-height: 160px; overflow-y: auto; background: var(--surface-container); border-radius: var(--r-m); padding: 8px 12px; font: 12px var(--mono); color: var(--on-surface-variant); }
+.pr-files div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pr-files .st { display: inline-block; width: 22px; color: var(--primary); font-weight: 700; }
+
+/* import from CLI */
+.import-btn { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px 0 14px; border-radius: var(--r-full); background: var(--tertiary-container); color: var(--on-tertiary-container); font: 600 13.5px var(--font); transition: border-radius var(--med) var(--spring), transform var(--med) var(--spring); animation: rise 520ms var(--spring) both; }
+.import-btn:hover { border-radius: var(--r-s); }
+.import-btn .n { background: var(--on-tertiary-container); color: var(--tertiary-container); border-radius: var(--r-full); padding: 0 8px; font-size: 12px; line-height: 20px; }
+.import-list { max-height: 46vh; overflow-y: auto; background: var(--surface-container); border-radius: var(--r-l); padding: 6px; margin: 12px 0 4px; }
+.import-list .ir { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--r-s); }
+.import-list .ir .grow { min-width: 0; flex: 1; }
+.import-list .ir b { font-weight: 500; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-list .ir small { display: block; color: var(--on-surface-variant); font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-count { font: 700 40px/1 var(--font); font-stretch: 118%; color: var(--primary); }
+
+/* /usage page */
+.usage-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.usage-table th { text-align: right; color: var(--on-surface-variant); font: 500 12px var(--font); padding: 10px 12px; border-bottom: 1px solid var(--outline-variant); }
+.usage-table th:first-child, .usage-table td:first-child { text-align: left; }
+.usage-table td { text-align: right; padding: 10px 12px; border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 50%, transparent); font-variant-numeric: tabular-nums; }
+.usage-table tr:last-child td { border-bottom: 0; }
+.usage-table .mdl { display: flex; align-items: center; gap: 10px; }
+.usage-table .mdl small { display: block; color: var(--on-surface-variant); }
+.usage-table .sub { color: var(--tertiary); font-size: 11.5px; display: block; }
+.usage-table tfoot td { font-weight: 700; border-top: 2px solid var(--outline-variant); }
+.daily { display: flex; align-items: flex-end; gap: 3px; height: 120px; padding: 12px 16px 6px; }
+.daily i { flex: 1; min-width: 4px; background: var(--primary); border-radius: 6px 6px 2px 2px; opacity: 0.85; animation: grow-h 700ms var(--spring) both; transform-origin: bottom; }
+.daily i:hover { opacity: 1; background: var(--tertiary); }
+@keyframes grow-h { from { transform: scaleY(0); } }
+.usage-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 8px; }
+.usage-kpis .k { background: var(--surface-high); border-radius: var(--r-m); padding: 12px 14px; }
+.usage-kpis .k b { display: block; font: 700 22px var(--font); font-stretch: 112%; }
+.usage-kpis .k small { color: var(--on-surface-variant); }
+
+/* background processes in the right panel */
+.bg-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12.5px; }
+.bg-row code { font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.bg-row .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex: none; }
+.bg-row .dot.off { background: var(--outline); }
+.bg-row button { width: 26px; height: 26px; }
+
+/* approval outside environment */
+.card .why { display: inline-flex; align-items: center; gap: 6px; font: 600 12px var(--font); color: var(--on-tertiary-container); background: var(--tertiary-container); border-radius: var(--r-full); padding: 3px 10px; margin-bottom: 8px; }
+.card .why .ms { font-size: 16px; }
+.below { flex-wrap: nowrap; } .below .chip { min-width: 0; flex-shrink: 1; }
