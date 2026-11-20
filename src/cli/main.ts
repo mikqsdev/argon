@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "./console.js"; // must stay first: fixes console stdin on the installed Argon.exe runtime
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 import chalk from "chalk";
