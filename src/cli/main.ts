@@ -151,8 +151,10 @@ async function main() {
 	if (f.help) return help();
 
 	// Read stdin when piped: `cat file | argon -p "explain"`
+	// (Not for subcommands: `serve` keeps stdin open as its lifeline to the parent process.)
+	const SUBCOMMANDS = ["help", "gui", "app", "serve", "login", "key", "logout", "providers", "models", "limits", "usage", "stats", "sessions", "mcp", "skills", "commands", "memory", "config", "env"];
 	let piped = "";
-	if (!process.stdin.isTTY && (f.print !== undefined || f._.length)) {
+	if (!process.stdin.isTTY && (f.print !== undefined || (f._.length && !SUBCOMMANDS.includes(f._[0])))) {
 		for await (const chunk of process.stdin) piped += chunk;
 	}
 
