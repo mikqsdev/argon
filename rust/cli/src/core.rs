@@ -43,8 +43,20 @@ pub struct Runtime {
     pub entry: PathBuf,
 }
 
+/// Drop the Windows verbatim prefix (`\\?\C:\…`): Node cannot load modules from such paths.
+pub fn plain(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => p,
+    }
+}
+
 fn exe_dir() -> PathBuf {
-    std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| PathBuf::from("."))
+    std::env::current_exe().ok().map(plain).and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn which(name: &str) -> Option<PathBuf> {
