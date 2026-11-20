@@ -379,12 +379,16 @@ export async function startServer(opts: { port?: number; open?: boolean } = {}):
 		// sessions
 		if (p === "/search") return send(res, 200, searchSessions(q("q") ?? ""));
 		if (seg[0] === "sessions") {
-			if (seg.length === 1 && m === "GET") return send(res, 200, guiSessions({ envId: q("envId"), query: q("q"), includeArchived: !!q("archived") }));
+			if (seg.length === 1 && m === "GET") {
+				const o = { envId: q("envId"), query: q("q"), includeArchived: !!q("archived") };
+				// ?origin=all is used by the CLI, which lists CLI and GUI sessions alike
+				return send(res, 200, q("origin") === "all" ? listSessions(o) : guiSessions(o));
+			}
 			if (seg.length === 1 && m === "POST") {
 				const b = await body(req);
 				const env = listEnvironments().find((e) => e.id === b.envId);
 				const cwd = resolve(env?.cwd ?? b.cwd ?? process.cwd());
-				const s = await ArgonSession.create({ cwd, envId: env?.id ?? null, model: b.model, effort: b.effort, mode: b.mode });
+				const s = await ArgonSession.create({ cwd, envId: env?.id ?? null, model: b.model, effort: b.effort, mode: b.mode, origin: b.origin === "cli" ? "cli" : "gui" });
 				attach(s);
 				s.persist();
 				send(res, 200, sessionPayload(s, s.id));
