@@ -48,13 +48,25 @@ fn which(name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Drop the Windows verbatim prefix (`\\?\C:\…`): Node cannot load modules from such paths.
+fn plain(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => p,
+    }
+}
+
 /// Node binary + core entry (`dist/cli/main.js`): bundled resources, or the repository in development.
 fn runtime(app: &tauri::AppHandle) -> Option<(PathBuf, PathBuf)> {
     if let (Ok(n), Ok(e)) = (std::env::var("ARGON_NODE"), std::env::var("ARGON_CORE_ENTRY")) {
         return Some((n.into(), e.into()));
     }
     let node_name = if cfg!(windows) { "node.exe" } else { "node" };
-    if let Ok(res) = app.path().resource_dir() {
+    if let Ok(res) = app.path().resource_dir().map(plain) {
         let core = res.join("core");
         let entry = core.join("app").join("dist").join("cli").join("main.js");
         if entry.is_file() {
@@ -62,7 +74,7 @@ fn runtime(app: &tauri::AppHandle) -> Option<(PathBuf, PathBuf)> {
             return Some((if node.is_file() { node } else { which("node")? }, entry));
         }
     }
-    let exe = std::env::current_exe().ok()?;
+    let exe = plain(std::env::current_exe().ok()?);
     let mut d: Option<&Path> = exe.parent();
     while let Some(p) = d {
         let entry = p.join("dist").join("cli").join("main.js");

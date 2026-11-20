@@ -205,7 +205,7 @@ fn main() -> ExitCode {
     }
 
     let cwd = a.cwd.as_ref().map(PathBuf::from).unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let cwd = std::fs::canonicalize(&cwd).map(|p| PathBuf::from(p.to_string_lossy().trim_start_matches(r"\\?\"))).unwrap_or(cwd);
+    let cwd = std::fs::canonicalize(&cwd).map(core::plain).unwrap_or(cwd);
     let core = match core::connect() {
         Ok(c) => c,
         Err(e) => {
