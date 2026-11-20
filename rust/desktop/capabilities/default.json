@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The Argon GUI is served by the local core on 127.0.0.1; it may call the shell's own commands (folder picker, theme, zoom, open links).",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
+  "permissions": ["core:default", "allow-pick-folder", "allow-set-theme", "allow-set-zoom", "allow-open-external"]
+}

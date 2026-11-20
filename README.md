@@ -4,7 +4,7 @@
 
 # Argon
 
-**An open-source AI agent with a full-screen terminal CLI and a Material 3 desktop app.**
+**An open-source AI agent with a full-screen Rust CLI and a Material 3 desktop app (Tauri).**
 Any provider · live model catalogs · MCP · skills · sub-agents · usage limits · GitHub PRs
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-7c4dff)](LICENSE)
@@ -20,7 +20,13 @@ Any provider · live model catalogs · MCP · skills · sub-agents · usage limi
 
 ---
 
-Argon is a coding and general-purpose agent that runs on your machine. It is built on the solid core of **[Pi](https://github.com/badlogic/pi-mono)** (`pi-ai` + `pi-agent-core`) for the agent loop and multi-provider streaming, and adds everything around it: tools, permissions and an environment sandbox, MCP, skills, sub-agents, memory, live model catalogs, usage limits with a spending counter, GitHub pull requests, a full-screen **CLI** and a **desktop GUI** that share the same sessions and settings.
+Argon is a coding and general-purpose agent that runs on your machine. It is built on the solid core of **[Pi](https://github.com/badlogic/pi-mono)** (`pi-ai` + `pi-agent-core`) for the agent loop and multi-provider streaming, and adds everything around it: tools, permissions and an environment sandbox, MCP, skills, sub-agents, memory, live model catalogs, usage limits with a spending counter, GitHub pull requests, a full-screen **CLI written in Rust** and a **Tauri desktop app** that share the same sessions and settings.
+
+```
+argon (Rust CLI) ──HTTP/WS──┐
+                            ├── Argon core (TypeScript + Pi, local server on 127.0.0.1) ── ~/.argon
+Argon (Tauri app) ─webview──┘
+```
 
 ## Highlights
 
@@ -63,26 +69,27 @@ Argon is a coding and general-purpose agent that runs on your machine. It is bui
 
 ### Windows installer
 
-Download **`Argon-Setup-<version>.exe`** from the [latest release](https://github.com/mikqsdev/argon/releases/latest) and run it. It installs:
+Download the **`Argon_<version>_x64-setup.exe`** installer from the [latest release](https://github.com/mikqsdev/argon/releases/latest) and run it (no admin rights needed). It installs:
 
-- **Argon** — the desktop app (Start menu and desktop shortcuts);
-- **`argon`** — the CLI, added to your user `PATH` automatically (open a new terminal and type `argon`). It runs on Argon's bundled runtime, no Node.js needed.
+- **Argon**: the desktop app, a native Tauri window (Start menu shortcut);
+- **`argon`**: the Rust CLI, added to your user `PATH` automatically (open a new terminal and type `argon`);
+- the Argon core with its own Node.js runtime, so nothing else is needed.
 
-The uninstaller removes both, takes `argon` off the `PATH`, and asks whether to delete your data (`%USERPROFILE%\.argon`). The installer is not code-signed yet, so Windows SmartScreen may ask for confirmation (*More info → Run anyway*).
+The uninstaller removes everything, takes `argon` off the `PATH`, and asks whether to delete your data (`%USERPROFILE%\.argon`). The installer is not code-signed yet, so Windows SmartScreen may ask for confirmation (*More info → Run anyway*).
 
 ### From source (Windows, macOS, Linux)
+
+Requires Node.js 22+ and Rust (stable). On Windows, use the MSVC toolchain (Visual Studio Build Tools) or the GNU one plus MinGW binutils (`winget install BrechtSanders.WinLibs.POSIX.UCRT`).
 
 ```bash
 git clone https://github.com/mikqsdev/argon.git
 cd argon
 npm install
-npm run build
-npm link          # puts `argon` on your PATH
-argon             # terminal UI
-argon gui         # desktop app (Electron) — `argon gui --web` for the browser version
+npm run build                         # the core
+cd rust && cargo build --release      # target/release/argon (CLI) and argon-desktop (app)
 ```
 
-Requires Node.js 22+. npm may block install scripts: run `npm install-scripts approve electron` (or `node node_modules/electron/install.js`) to download the Electron binary.
+`npm run cli` and `npm run desktop` run the CLI and the app from source, and `npm run dist` builds the installer. `npm run gui` opens the GUI in the browser instead.
 
 ## Quick start
 
@@ -99,7 +106,14 @@ argon -m openrouter/anthropic/claude-sonnet-5.5 --mode plan
 
 ## The CLI
 
-`argon` opens a full-screen terminal interface: the transcript scrolls above (and stays in your terminal's scrollback), a fixed panel below holds the input box, the model · effort · mode label, a status row (environment, folder, git branch, detected context files such as `AGENTS.md`, session cost and the usage ring) and keyboard hints.
+`argon` is a native Rust binary that opens a full-screen terminal interface. The transcript scrolls above and stays in your terminal's scrollback. A fixed panel below holds:
+
+- the input box;
+- the model · effort · mode label;
+- a status row: environment, folder, git branch, detected context files such as `AGENTS.md`, session cost and the usage ring;
+- keyboard hints.
+
+It connects to the core the desktop app is running. If the app isn't running, it starts a private core and stops it on exit.
 
 | Key | Action |
 |---|---|
@@ -166,12 +180,15 @@ Both use `~/.argon` (override with `ARGON_HOME`): `settings.json`, `auth.json`, 
 ## Development
 
 ```bash
-npm run build      # TypeScript → dist/
+npm run build      # core: TypeScript → dist/
 npm test           # end-to-end tests with a fake model (no network)
-npm run desktop    # run the desktop app from source
-npm run dist       # Windows installer → release/
-node test/harness/tui-harness.mjs <outDir>   # drive the CLI in a headless terminal
+npm run cli        # Rust CLI from source
+npm run desktop    # Tauri app from source (tauri dev)
+npm run dist       # Windows installer → rust/target/release/bundle/nsis/
+cd rust && cargo test
 ```
+
+`test/fixtures/faux-core.mjs` is a core with a fake model. Point the clients at it with `ARGON_NODE=node ARGON_CORE_ENTRY=test/fixtures/faux-core.mjs` and a throwaway `ARGON_HOME` to try them without network.
 
 See [CLAUDE.md](CLAUDE.md) for the architecture and conventions.
 
@@ -179,7 +196,8 @@ See [CLAUDE.md](CLAUDE.md) for the architecture and conventions.
 
 - [Pi](https://github.com/badlogic/pi-mono) by Mario Zechner — agent loop, providers and OAuth (MIT)
 - [Model Context Protocol SDK](https://github.com/modelcontextprotocol/typescript-sdk) (MIT)
-- [Electron](https://www.electronjs.org/), [marked](https://marked.js.org/), [xterm.js](https://xtermjs.org/) (tests)
+- [Tauri](https://tauri.app/) (MIT/Apache 2.0), [crossterm](https://github.com/crossterm-rs/crossterm), [ureq](https://github.com/algesten/ureq), [tungstenite](https://github.com/snapview/tungstenite-rs)
+- [marked](https://marked.js.org/), [xterm.js](https://xtermjs.org/) (tests)
 - [Roboto Flex](https://fonts.google.com/specimen/Roboto+Flex) (OFL) and [Material Symbols](https://fonts.google.com/icons) (Apache 2.0)
 
 ## License

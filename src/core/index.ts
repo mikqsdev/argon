@@ -10,7 +10,7 @@ export * from "./skills.js";
 export * from "./memory.js";
 export * from "./mcp.js";
 export * from "./prompt.js";
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 export * from "./catalog.js";
 export * from "./effort.js";
 export * from "./agents.js";

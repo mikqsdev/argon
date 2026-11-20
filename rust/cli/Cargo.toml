@@ -1,0 +1,19 @@
+[package]
+name = "argon-cli"
+description = "Argon full-screen terminal client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "argon"
+path = "src/main.rs"
+
+[dependencies]
+crossterm = "0.28"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", default-features = false, features = ["json"] }
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+unicode-width = "0.2"

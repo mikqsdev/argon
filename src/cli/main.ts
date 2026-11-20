@@ -41,7 +41,7 @@ interface Flags {
 function parseArgs(argv: string[]): Flags {
 	const f: Flags = { _: [] };
 	const alias: Record<string, string> = { p: "print", m: "model", e: "effort", c: "continue", r: "resume", h: "help", v: "version", C: "cwd" };
-	const booleans = new Set(["continue", "json", "help", "version", "all", "open", "no-open", "web", "delete-sessions", "keep-sessions"]);
+	const booleans = new Set(["continue", "json", "help", "version", "all", "open", "no-open", "web", "delete-sessions", "keep-sessions", "advertise"]);
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "--") {
@@ -57,6 +57,10 @@ function parseArgs(argv: string[]): Flags {
 		let val: any = m[2];
 		if (key === "no-open") {
 			f.open = false;
+			continue;
+		}
+		if (key === "no-parent") {
+			(f as any).parent = false;
 			continue;
 		}
 		if (val === undefined) {
@@ -170,11 +174,39 @@ async function main() {
 					console.log(`\n  ${accent("●")} ${chalk.bold("Argon")} ${dim(T("— app desktop avviata", "— desktop app started"))}\n`);
 					return process.exit(0);
 				}
-				console.log(dim(T("  App desktop non installata (npm i -D electron): apro la versione web.", "  Desktop app not installed (npm i -D electron): opening the web version.")));
+				console.log(dim(T("  App desktop non trovata (npm run desktop per compilarla): apro la versione web.", "  Desktop app not found (npm run desktop builds it): opening the web version.")));
 			}
 			const { startServer } = await import("../server/server.js");
 			const { url } = await startServer({ port: f.port ? Number(f.port) : undefined, open: f.open !== false });
 			console.log(`\n  ${accent("●")} ${chalk.bold("Argon GUI")} ${dim("→")} ${chalk.underline(url)}\n  ${dim(T("Ctrl+C per chiudere il server", "Ctrl+C to stop the server"))}\n`);
+			return;
+		}
+		case "serve": {
+			// Headless core for the Rust CLI and the Tauri app: prints one ready line with the URL,
+			// port and token. `--advertise` also writes ~/.argon/core.json so other clients reuse it.
+			const { startServer } = await import("../server/server.js");
+			const { paths } = await import("../core/paths.js");
+			const { writeFileSync, rmSync } = await import("node:fs");
+			const { join } = await import("node:path");
+			const { url, close } = await startServer({ port: f.port ? Number(f.port) : 0, open: false });
+			const u = new URL(url);
+			const info = { url, port: Number(u.port), token: u.searchParams.get("t"), pid: process.pid, version: VERSION };
+			const file = join(paths.home, "core.json");
+			if ((f as any).advertise) writeFileSync(file, JSON.stringify(info));
+			const stop = () => {
+				if ((f as any).advertise) rmSync(file, { force: true });
+				close();
+				process.exit(0);
+			};
+			process.on("SIGINT", stop);
+			process.on("SIGTERM", stop);
+			// The parent (CLI or desktop app) owns this process: exit when it closes our stdin.
+			if ((f as any).parent !== false) {
+				process.stdin.resume();
+				process.stdin.on("end", stop);
+				process.stdin.on("close", stop);
+			}
+			console.log("ARGON_READY " + JSON.stringify(info));
 			return;
 		}
 		case "login":

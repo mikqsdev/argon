@@ -1,17 +1,18 @@
 {
   "name": "argon-agent",
-  "version": "0.2.0",
-  "description": "Argon (Ar, 18) — open-source AI agent with CLI and GUI, multi-provider, MCP, skills and usage limits",
+  "version": "0.3.0",
+  "description": "Argon (Ar, 18) — open-source AI agent: Rust CLI, Tauri desktop app, multi-provider core with MCP, skills and usage limits",
   "main": "dist/core/index.js",
   "scripts": {
     "build": "tsc -p .",
     "dev": "tsc -p . --watch",
     "start": "node dist/cli/main.js",
-    "gui": "node dist/cli/main.js gui",
+    "gui": "node dist/cli/main.js gui --web",
     "test": "node --test test/*.test.mjs",
-    "desktop": "npm run build && electron desktop/main.js",
-    "icon": "electron desktop/make-icon.mjs",
-    "dist": "npm run build && electron-builder --win"
+    "cli": "npm run build && cd rust && cargo run -p argon-cli --",
+    "desktop": "npm run build && node scripts/tauri.mjs dev",
+    "stage": "node scripts/stage-core.mjs",
+    "dist": "npm run build && node scripts/stage-core.mjs && node scripts/tauri.mjs build"
   },
   "license": "MIT",
   "type": "module",
@@ -26,16 +27,15 @@
     "ws": "^8.23.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.6",
     "@types/node": "^24.19.2",
     "@types/ws": "^8.18.2",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
-    "electron": "^45.4.1",
-    "electron-builder": "^26.18.0",
     "typescript": "5.9"
   },
   "bin": {
-    "argon": "dist/cli/main.js"
+    "argon-core": "dist/cli/main.js"
   },
   "engines": {
     "node": ">=22"
@@ -43,70 +43,12 @@
   "files": [
     "dist",
     "gui",
-    "desktop",
-    "build",
     "docs/logo.svg",
     "README.md",
     "LICENSE",
     "CLAUDE.md"
   ],
-  "allowScripts": {
-    "electron@45.4.1": true
-  },
   "author": "mikqsdev",
-  "build": {
-    "appId": "dev.argon.desktop",
-    "productName": "Argon",
-    "copyright": "MIT · Argon contributors",
-    "extraMetadata": {
-      "main": "desktop/main.js"
-    },
-    "directories": {
-      "output": "release",
-      "buildResources": "build"
-    },
-    "files": [
-      "dist/**/*",
-      "gui/**/*",
-      "desktop/**/*",
-      "build/icon.png",
-      "package.json",
-      "!desktop/make-icon.mjs",
-      "!desktop/bin/**"
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "build/icon.png",
-      "artifactName": "Argon-Setup-${version}.exe"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Argon",
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "include": "build/installer.nsh",
-      "deleteAppDataOnUninstall": false
-    },
-    "asar": false,
-    "extraFiles": [
-      {
-        "from": "desktop/bin",
-        "to": "bin",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ]
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mikqsdev/argon.git"
@@ -124,7 +66,8 @@
     "claude",
     "openai",
     "openrouter",
-    "electron",
+    "rust",
+    "tauri",
     "material-design"
   ]
 }
