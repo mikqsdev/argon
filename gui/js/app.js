@@ -1,4 +1,4 @@
-import { api, connectWs, esc, $, $$, el, icon, t, tt, setLang, lang, md, popover, closePop, modal, prompt, toast, ringSvg, fmtTokens, fmtAmount, debounce, relTime, loader, initRipples, staggerOnce, burst, viewTransition, motion, token } from "./lib.js";
+import { api, connectWs, esc, $, $$, el, icon, t, tt, setLang, lang, md, popover, closePop, modal, prompt, toast, ringSvg, fmtTokens, fmtAmount, debounce, relTime, loader, initRipples, staggerOnce, burst, viewTransition, motion, token, setSel } from "./lib.js";
 import { applyAppearance } from "./theme.js";
 import { renderSettings, renderCustomize, renderStatsPage, renderSearch, openFolderModal, onOAuthEvent, renderUsagePage } from "./pages.js";
 
@@ -47,7 +47,16 @@ async function boot() {
 	} catch {}
 	renderShell();
 	initRipples();
-	window.addEventListener("hashchange", () => viewTransition(route));
+	// Moving between sections of Settings / Customize updates the page in place (the menu stays,
+	// only the section content comes in); any other navigation uses the page transition.
+	let lastTop = location.hash.replace(/^#\/?/, "").split("/")[0];
+	window.addEventListener("hashchange", () => {
+		const top = location.hash.replace(/^#\/?/, "").split("/")[0];
+		const inPage = top === lastTop && (top === "settings" || top === "customize");
+		lastTop = top;
+		if (inPage) route();
+		else viewTransition(route);
+	});
 	route();
 	connectWs(onWs);
 	document.addEventListener("keydown", globalKeys);
@@ -214,7 +223,9 @@ export function renderSidebar() {
 		[t("earlier"), list.filter((s) => !s.pinned && s.updatedAt < startToday)],
 	].filter(([, l]) => l.length);
 	const name = S.settings.general.userName || "Argon";
-	side.innerHTML = `
+	// The markup does not depend on the current page: selection is applied in place afterwards, so
+	// navigating never rebuilds the sidebar (no flashing highlights, no replayed animations).
+	const html = `
 		<div class="side-top">
 			<button class="icon-btn" data-act="toggle" title="Ctrl+B">${icon("panel")}</button>
 			<button class="icon-btn" data-act="back">${icon("left")}</button>
@@ -222,9 +233,9 @@ export function renderSidebar() {
 		</div>
 		<nav class="nav">
 			<button class="fab" data-go="/">${icon("newchat")} <span>${t("newSession")}</span></button>
-			<button class="nav-item ${S.route === "search" ? "sel" : ""}" data-go="/search">${icon("search")} ${t("search")} <kbd>Ctrl K</kbd></button>
-			<button class="nav-item ${S.route === "customize" ? "sel" : ""}" data-go="/customize">${icon("box")} ${t("customize")}</button>
-			<button class="nav-item ${S.route === "stats" ? "sel" : ""}" data-go="/stats">${icon("chart")} ${t("stats")}</button>
+			<button class="nav-item" data-go="/search">${icon("search")} ${t("search")} <kbd>Ctrl K</kbd></button>
+			<button class="nav-item" data-go="/customize">${icon("box")} ${t("customize")}</button>
+			<button class="nav-item" data-go="/stats">${icon("chart")} ${t("stats")}</button>
 		</nav>
 		<div class="side-section">${envCardHtml()}</div>
 		<div class="sessions">
@@ -234,6 +245,15 @@ export function renderSidebar() {
 			<button class="user-chip" data-act="user"><span class="avatar">${esc(name[0].toUpperCase())}</span><span class="who"><span class="n">${esc(name)}</span><span class="p">Argon ${esc(S.boot.version)}</span></span></button>
 			<button class="icon-btn" data-go="/settings" title="${t("settings")}">${icon("settings")}</button>
 		</div>`;
+	const fresh = html !== S._sideHtml;
+	if (fresh) {
+		const scroll = $(".sessions", side)?.scrollTop ?? 0;
+		side.innerHTML = html;
+		S._sideHtml = html;
+		const list_ = $(".sessions", side);
+		if (list_) list_.scrollTop = scroll;
+	}
+	syncSidebarSel(side, fresh);
 	const sig = S.envId + "|" + list.map((x) => x.id).join(",");
 	if (sig !== S._sideSig) {
 		S._sideSig = sig;
@@ -254,12 +274,21 @@ export function renderSidebar() {
 	};
 }
 
+/** Mark the current page / session in the sidebar without rebuilding it. */
+function syncSidebarSel(side, fresh) {
+	// Right after a rebuild the selection is simply restored (no animation); otherwise only the
+	// item that becomes selected animates.
+	const apply = (el, on) => (fresh ? el.classList.toggle("sel", on) : setSel(el, on));
+	for (const b of side.querySelectorAll(".nav > .nav-item")) apply(b, b.dataset.go === "/" + S.route);
+	const cur = S.cur?.meta.id;
+	for (const it of side.querySelectorAll(".s-item")) apply(it, it.dataset.sid === cur);
+}
+
 const sTitle = (x) => (x === "New session" ? t("newSession") : x);
 
 function sessionItem(s) {
-	const sel = S.cur?.meta.id === s.id;
 	const status = S.waiting.has(s.id) ? `<span class="dot-wait"></span>` : S.running.has(s.id) ? loader(16, "sm") : "";
-	return `<div class="s-item ${sel ? "sel" : ""}" data-sid="${s.id}" title="${esc(s.title)}">${status}<span class="t">${esc(sTitle(s.title))}</span>${s.pinned ? `<span class="pin">${icon("pin")}</span>` : ""}<button class="icon-btn more" style="width:22px;height:22px">${icon("more")}</button></div>`;
+	return `<div class="s-item" data-sid="${s.id}" title="${esc(s.title)}">${status}<span class="t">${esc(sTitle(s.title))}</span>${s.pinned ? `<span class="pin">${icon("pin")}</span>` : ""}<button class="icon-btn more" style="width:22px;height:22px">${icon("more")}</button></div>`;
 }
 
 // ───────────────────────── environments (single source of truth) ─────────────────────────
@@ -544,8 +573,19 @@ function renderHome() {
 export async function loadStatsCard(box, range = S.statsRange) {
 	if (!box) return;
 	S.statsRange = range;
-	S.stats = await api(`/stats?range=${range}`);
-	const st = S.stats;
+	// Show the last known numbers for this range at once (or a loader the first time), then refresh.
+	S.statsCache ??= {};
+	const cached = S.statsCache[range];
+	if (cached) renderStatsCard(box, cached, range);
+	else if (!box.children.length) box.innerHTML = `<div class="stats-loading">${loader(36, "center")}</div>`;
+	const fresh = await api(`/stats?range=${range}`);
+	S.statsCache[range] = fresh;
+	if (S.statsRange !== range || !box.isConnected) return;
+	if (!cached || JSON.stringify(cached) !== JSON.stringify(fresh)) renderStatsCard(box, fresh, range);
+}
+
+function renderStatsCard(box, st, range) {
+	S.stats = st;
 	const stats = [
 		[t("k_sessions"), st.sessions, st.sessions],
 		[t("k_messages"), st.messages.toLocaleString(), st.messages],
@@ -557,25 +597,38 @@ export async function loadStatsCard(box, range = S.statsRange) {
 		[t("k_fav"), st.favoriteModel ?? "—"],
 	];
 	const maxTok = Math.max(1, ...st.models.map((m) => m.tokens));
-	box.innerHTML = `
+	// The header (tabs) is built once; later clicks only move the selection and swap the body, so
+	// the buttons keep their animation state and the numbers don't count up from zero again.
+	const first = !box.querySelector(".stats-head");
+	if (first) {
+		box.innerHTML = `
 		<div class="stats-head">
-			<div class="tabs" data-k="tab"><button class="${S.statsTab === "overview" ? "on" : ""}" data-v="overview">${t("overview")}</button><button class="${S.statsTab === "models" ? "on" : ""}" data-v="models">${t("models")}</button></div>
-			<div class="tabs" data-k="range">${["all", "30d", "7d"].map((r) => `<button class="${range === r ? "on" : ""}" data-v="${r}">${r === "all" ? t("all") : r}</button>`).join("")}</div>
+			<div class="tabs" data-k="tab"><button data-v="overview">${t("overview")}</button><button data-v="models">${t("models")}</button></div>
+			<div class="tabs" data-k="range">${["all", "30d", "7d"].map((r) => `<button data-v="${r}">${r === "all" ? t("all") : r}</button>`).join("")}</div>
 		</div>
+		<div class="stats-body"></div>`;
+		box.onclick = (e) => {
+			const b = e.target.closest(".stats-head [data-v]");
+			if (!b) return;
+			const k = b.parentElement.dataset.k;
+			if (k === "tab") S.statsTab = b.dataset.v;
+			loadStatsCard(box, k === "range" ? b.dataset.v : S.statsRange);
+		};
+	}
+	for (const b of box.querySelectorAll('.stats-head [data-k="tab"] button')) b.classList.toggle("on", b.dataset.v === S.statsTab);
+	for (const b of box.querySelectorAll('.stats-head [data-k="range"] button')) b.classList.toggle("on", b.dataset.v === range);
+	const body = $(".stats-body", box);
+	body.classList.toggle("calm", !first);
+	body.innerHTML = `
 		${S.statsTab === "overview"
 			? `<div class="stat-grid">${stats.map(([k, v, raw, fmtT]) => `<div class="stat"><div class="k">${k}</div><div class="v" title="${esc(v)}" ${typeof raw === "number" ? `data-count="${raw}" ${fmtT ? 'data-fmt="tokens"' : ""}` : ""}>${esc(v)}</div></div>`).join("")}</div>
 			   <div class="heat">${heatCells(st.days)}</div>`
 			: `<div class="model-rows">${st.models.slice(0, 8).map((m) => `<div class="model-row"><span>${esc(m.model)} <span style="color:var(--muted);font-size:12px">${esc(m.provider)}</span></span><span>${fmtTokens(m.tokens)}</span><span style="color:var(--muted)">$${m.cost.toFixed(2)}</span><div class="barwrap"><i style="width:${(m.tokens / maxTok) * 100}%"></i></div></div>`).join("") || `<div class="empty">—</div>`}</div>`}
 		<div class="fun">${esc(st.funFact)} · ${tt("Spesa equivalente", "Equivalent spend")} $${st.totalCost.toFixed(2)}</div>`;
-	animateCounters(box);
-	staggerOnce($(".stat-grid", box));
-	box.onclick = (e) => {
-		const b = e.target.closest("[data-v]");
-		if (!b) return;
-		const k = b.parentElement.dataset.k;
-		if (k === "tab") S.statsTab = b.dataset.v;
-		loadStatsCard(box, k === "range" ? b.dataset.v : range);
-	};
+	if (first) {
+		animateCounters(body);
+		staggerOnce($(".stat-grid", body));
+	}
 }
 
 export function heatCells(days, weeks = 26) {

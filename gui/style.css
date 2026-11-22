@@ -250,10 +250,11 @@ main { display: flex; flex-direction: column; min-width: 0; height: calc(100vh /
 .tabs button:hover { color: var(--on-surface); }
 .tabs button.on { background: var(--secondary-container); color: var(--on-secondary-container); border-radius: 18px; }
 /* tabs in the stats card's top corners: concentric radius = card radius − 20px padding */
-.stats-head .tabs button { --rc: calc(var(--r-xl) - 20px); }
-.stats-head .tabs:first-child button:first-child:not(.on) { border-radius: var(--rc) 6px 6px var(--rc); }
-.stats-head .tabs:last-child button:last-child:not(.on) { border-radius: 6px var(--rc) var(--rc) 6px; }
-.stats-head .tabs button.on { border-radius: var(--rc); }
+/* (Statistiche page only; the home card keeps the round pills) */
+#stats-big .stats-head .tabs button { --rc: calc(var(--r-xl) - 20px); }
+#stats-big .stats-head .tabs:first-child button:first-child:not(.on) { border-radius: var(--rc) 6px 6px var(--rc); }
+#stats-big .stats-head .tabs:last-child button:last-child:not(.on) { border-radius: 6px var(--rc) var(--rc) 6px; }
+#stats-big .stats-head .tabs button.on { border-radius: var(--rc); }
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .stat { background: var(--surface-high); padding: 12px 14px; min-width: 0; border-radius: var(--r-s); transition: border-radius var(--med) var(--spring); }
 .stat:nth-child(1) { border-radius: var(--r-l) var(--r-s) var(--r-s) var(--r-s); }
@@ -564,7 +565,8 @@ button.chip:hover { border-radius: var(--r-full); }
 
 /* ───────── settings / customize ───────── */
 .page { display: grid; grid-template-columns: 240px 1fr; min-height: 100%; }
-.page-nav { padding: 24px 12px; display: flex; flex-direction: column; gap: 2px; }
+/* the section menu stays in place while the page content scrolls */
+.page-nav { padding: 24px 12px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; }
 .page-nav h2 { font: 600 22px/28px var(--font); font-stretch: 110%; margin: 0 16px 16px; }
 .page-body { padding: 26px 36px 72px; max-width: 900px; }
 .page-body h3 { font: 600 28px/36px var(--font); font-stretch: 112%; letter-spacing: -0.3px; margin: 0 0 6px; }
@@ -579,6 +581,8 @@ details.group > summary::-webkit-details-marker { display: none; }
 .field .lbl { flex: 1; min-width: 0; }
 .field .lbl b { font: 500 15px/22px var(--font); display: block; }
 .field .lbl small { color: var(--on-surface-variant); font-size: 13px; line-height: 18px; }
+/* emphasis inside a description stays in the sentence (only the field title is a block) */
+.field .lbl small b { display: inline; font: inherit; font-weight: 600; color: var(--on-surface); }
 .inp {
 	background: var(--surface-highest); border: 0; border-radius: var(--r-s); height: 44px; padding: 0 14px; outline: 0; min-width: 0;
 	box-shadow: inset 0 -2px 0 transparent; transition: box-shadow var(--fast), border-radius var(--med) var(--spring);
@@ -650,6 +654,13 @@ select.inp { cursor: pointer; }
 .result mark { background: color-mix(in srgb, var(--primary) 30%, transparent); color: inherit; border-radius: 4px; padding: 0 2px; }
 
 /* ───────── desktop app (Electron) ───────── */
+/* UI chrome is not text: clicking menus, tabs and buttons must not select their labels */
+button, .nav-item, .s-item, .opt, .mrow, .chip, .tabs, .page-nav, .sidebar, .pop .head, .env-card, .user-chip, .title-btn, .stat .k, .rp-h { -webkit-user-select: none; user-select: none; }
+input, textarea, [contenteditable="true"] { -webkit-user-select: text; user-select: text; }
+.stats-loading { min-height: 160px; display: grid; place-items: center; }
+/* after the first render, switching tab/range just swaps the content */
+.stats-body.calm .heat i { animation: none; }
+
 /* desktop app (Tauri, native title bar): WebView2 has no speech recognition */
 .desktop [data-c="mic"] { display: none; }
 
@@ -660,7 +671,7 @@ select.inp { cursor: pointer; }
 	.pane { margin-left: 8px; }
 	.rightpanel.show { position: fixed; right: 0; top: 0; bottom: 0; z-index: 35; box-shadow: var(--shadow); }
 	.page { grid-template-columns: 1fr; }
-	.page-nav { flex-direction: row; overflow-x: auto; }
+	.page-nav { flex-direction: row; overflow-x: auto; position: static; max-height: none; }
 	.stat-grid { grid-template-columns: repeat(2, 1fr); }
 	.hello { font-size: 32px; line-height: 40px; }
 }

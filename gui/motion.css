@@ -11,15 +11,21 @@ body, .pane, .rightpanel, .composer, .group, .card, .pop, .stats-card, .rp-sec, 
 @keyframes ripple { to { transform: scale(1); } }
 :is(.btn, .icon-btn, .nav-item, .opt, .mrow, .chip, .fab, .send, .s-item, .tabs button, .preset, .tool-line, .tools-head, .user-chip, .result, .title-btn) { overflow: hidden; }
 
-/* page transitions (View Transitions API) */
+/* page transitions (View Transitions API)
+   The panel frame (.pane) never moves: it is swapped instantly. Only what is inside it (.view)
+   animates: the old page fades out, then the new one rises in, so texts never overlap.
+   Sections of the same page (Settings / Customize) skip the transition entirely (app.js). */
 .pane { view-transition-name: pane; }
+.view { view-transition-name: content; }
 .sidebar { view-transition-name: drawer; }
-::view-transition-old(pane) { animation: 180ms var(--emph) both vt-out; }
-::view-transition-new(pane) { animation: 420ms var(--spring) both vt-in; }
-@keyframes vt-out { to { opacity: 0; transform: scale(0.985); } }
-@keyframes vt-in { from { opacity: 0; transform: translateY(18px) scale(0.99); } }
+::view-transition-group(pane), ::view-transition-group(content), ::view-transition-group(drawer) { animation-duration: 0s; }
+::view-transition-old(pane) { animation: none; opacity: 0; }
+::view-transition-new(pane) { animation: none; }
+::view-transition-old(content) { animation: 140ms var(--emph) both vt-out; }
+::view-transition-new(content) { animation: 380ms var(--spring) 110ms both vt-in; }
+@keyframes vt-out { to { opacity: 0; } }
+@keyframes vt-in { from { opacity: 0; transform: translateY(14px); } }
 ::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
-::view-transition-group(drawer) { animation-duration: 0s; }
 
 /* staggered entrances */
 @keyframes rise { from { opacity: 0; transform: translateY(14px) scale(0.98); } }
@@ -55,7 +61,10 @@ body, .pane, .rightpanel, .composer, .group, .card, .pop, .stats-card, .rp-sec, 
 .stat:hover { transform: translateY(-2px) scale(1.02); background: var(--surface-highest); }
 
 /* nav pill grows in */
-.nav-item.sel, .s-item.sel { animation: pill 420ms var(--spring); }
+/* only the item that has just been selected plays the pill (setSel in lib.js); the highlight of the
+   previous item goes away quickly */
+.nav-item.sel.just-sel, .s-item.sel.just-sel { animation: pill 420ms var(--spring); }
+.nav-item, .s-item { transition-duration: var(--fast); }
 @keyframes pill { from { background-color: transparent; transform: scaleX(0.92); } }
 .s-item { transition: transform var(--med) var(--spring), background var(--fast); }
 .s-item:hover { transform: translateX(3px); }

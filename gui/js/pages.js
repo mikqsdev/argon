@@ -1,4 +1,4 @@
-import { api, esc, $, $$, el, icon, t, tt, lang, modal, toast, fmtTokens, fmtAmount, debounce, relTime, loader, staggerOnce } from "./lib.js";
+import { api, esc, $, $$, el, icon, t, tt, lang, modal, toast, fmtTokens, fmtAmount, debounce, relTime, loader, staggerOnce, setSel } from "./lib.js";
 import { S, go, saveSettings, reloadBoot, loadStatsCard, limitRowHtml, refreshSessions, applyTheme, revealTransition, spendHtml, animateCounters, providerBadge, setEnv, renameEnv, confirmDeleteEnv } from "./app.js";
 import { PRESETS, SCHEME_NAMES, buildScheme } from "./theme.js";
 
@@ -59,12 +59,33 @@ function bindForm(root, after) {
 }
 
 function pageShell(view, title, tabs, cur, base) {
-	view.innerHTML = `<div class="page"><nav class="page-nav"><h2>${title}</h2>${tabs.map(([id, ic, l]) => `<button class="nav-item ${id === cur ? "sel" : ""}" data-go="${base}/${id}">${icon(ic)} ${l}</button>`).join("")}</nav><div class="page-body" id="page-body"></div></div>`;
-	view.querySelector(".page-nav").onclick = (e) => {
-		const b = e.target.closest("[data-go]");
-		if (b) go(b.dataset.go);
-	};
-	const body = $("#page-body", view);
+	// Same page (e.g. Settings → another Settings section): keep the menu, move the selection in
+	// place and replace only the section content.
+	const sig = [base, title, ...tabs.map(([id, , l]) => id + ":" + l)].join("|");
+	const reuse = view.querySelector(".page")?.dataset.sig === sig;
+	if (!reuse) {
+		view.innerHTML = `<div class="page" data-sig="${esc(sig)}"><nav class="page-nav"><h2>${title}</h2>${tabs.map(([id, ic, l]) => `<button class="nav-item" data-go="${base}/${id}">${icon(ic)} ${l}</button>`).join("")}</nav><div class="page-body" id="page-body"></div></div>`;
+		view.querySelector(".page-nav").onclick = (e) => {
+			const b = e.target.closest("[data-go]");
+			if (b) go(b.dataset.go);
+		};
+	}
+	for (const b of view.querySelectorAll(".page-nav .nav-item")) {
+		const on = b.dataset.go === `${base}/${cur}`;
+		if (reuse) setSel(b, on);
+		else b.classList.toggle("sel", on);
+	}
+	let body = $("#page-body", view);
+	if (reuse) {
+		// A new container per section: late async results of the previous section land in the
+		// detached old one instead of overwriting this section.
+		const next = document.createElement("div");
+		next.className = "page-body";
+		next.id = "page-body";
+		body.replaceWith(next);
+		body = next;
+		view.scrollTop = 0;
+	}
 	setTimeout(() => staggerOnce(body, 1100), 0);
 	return body;
 }
@@ -653,7 +674,10 @@ export function renderCustomize(view, tab) {
 		["hooks", "hook", "Hook"],
 	];
 	const body = pageShell(view, t("customize"), tabs, tab, "/customize");
-	({ connectors, agents: agentsPage, skills, commands, memory, hooks })[tab]?.(body) ?? connectors(body);
+	// (pick the section first: `section?.(body) ?? connectors(body)` also ran Connectors after any
+	// section that returns undefined, e.g. Hook, overwriting it)
+	const section = { connectors, agents: agentsPage, skills, commands, memory, hooks }[tab] ?? connectors;
+	section(body);
 }
 
 const MCP_PRESETS = [
@@ -664,7 +688,17 @@ const MCP_PRESETS = [
 ];
 
 async function connectors(b) {
-	const st = await api("/mcp");
+	// Render at once with the live state (bootstrap + WebSocket updates), then refresh it.
+	const st = S.mcp ?? (await api("/mcp"));
+	if (S.mcp)
+		api("/mcp")
+			.then((fresh) => {
+				if (b.isConnected && JSON.stringify(fresh) !== JSON.stringify(st)) {
+					S.mcp = fresh;
+					connectors(b);
+				}
+			})
+			.catch(() => {});
 	const servers = S.settings.mcp.servers;
 	b.innerHTML = `<h3>${tt("Connettori (MCP)", "Connectors (MCP)")}</h3><p class="lead">${tt("Collega server Model Context Protocol: i loro strumenti diventano strumenti di Argon (mcp__server__tool).", "Connect Model Context Protocol servers: their tools become Argon tools (mcp__server__tool).")}</p>
 	<div class="group">${st.map((m) => `
@@ -943,32 +977,54 @@ function agentModal(a, done) {
 
 // ───────────────────────── stats & search ─────────────────────────
 export async function renderUsagePage(view, range = "30d") {
-	view.innerHTML = `<div class="search-page" style="max-width:980px">${loader(40, "center")}</div>`;
+	// Header and range buttons are built once; switching range only swaps the numbers, the table and
+	// the agents (the 30-day chart does not depend on the range), so nothing replays its entrance.
+	let page = view.querySelector(".usage-page");
+	const first = !page;
+	if (first) {
+		view.innerHTML = `<div class="search-page usage-page" style="max-width:980px">
+		<div class="usage-head"><h3>${tt("Utilizzo dettagliato", "Detailed usage")}</h3>
+			<div class="tabs" data-range>${[["today", tt("Oggi", "Today")], ["7d", "7d"], ["30d", "30d"], ["all", t("all")]].map(([k, l]) => `<button data-v="${k}">${l}</button>`).join("")}</div></div>
+		<div id="usage-body">${loader(40, "center")}</div>
+	</div>`;
+		page = view.querySelector(".usage-page");
+		view.querySelector("[data-range]").onclick = (e) => {
+			const b = e.target.closest("[data-v]");
+			if (b && !b.classList.contains("on")) renderUsagePage(view, b.dataset.v);
+		};
+	}
+	for (const b of page.querySelectorAll("[data-range] button")) b.classList.toggle("on", b.dataset.v === range);
+	page.dataset.range = range;
 	const d = await api(`/usage?range=${range}`);
+	if (!page.isConnected || page.dataset.range !== range) return;
+	const body = $("#usage-body", page);
 	const maxDay = Math.max(0.0001, ...d.daily.map((x) => x.cost));
 	const fmt$ = (v) => "$" + (v < 1 ? v.toFixed(3) : v.toFixed(2));
-	view.innerHTML = `<div class="search-page" style="max-width:980px">
-		<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px"><h3 style="margin:0">${tt("Utilizzo dettagliato", "Detailed usage")}</h3>
-			<div class="tabs" data-range>${[["today", tt("Oggi", "Today")], ["7d", "7d"], ["30d", "30d"], ["all", t("all")]].map(([k, l]) => `<button class="${range === k ? "on" : ""}" data-v="${k}">${l}</button>`).join("")}</div></div>
-		<div class="group"><div class="usage-kpis stagger">
-			<div class="k"><b data-count="${d.totals.cost}" data-money>$0</b><small>${tt("Costo totale", "Total cost")}</small></div>
-			<div class="k"><b data-count="${d.totals.tokens}" data-fmt="tokens">0</b><small>${tt("Token", "Tokens")}</small></div>
-			<div class="k"><b data-count="${d.totals.calls}">0</b><small>${tt("Chiamate al modello", "Model calls")}</small></div>
-			<div class="k"><b data-count="${d.totals.subagentCost}" data-money>$0</b><small>${tt("di cui sub-agenti", "of which sub-agents")}</small></div>
-		</div></div>
-		<div class="group"><div class="gh">${tt("Ultimi 30 giorni", "Last 30 days")}</div><div class="daily">${d.daily.map((x, i) => `<i style="height:${Math.max(2, (x.cost / maxDay) * 100)}%;animation-delay:${i * 18}ms" title="${x.day}: ${fmt$(x.cost)} · ${fmtTokens(x.tokens)}"></i>`).join("")}</div></div>
-		<div class="group" style="overflow-x:auto"><table class="usage-table">
+	const money = (v) => "$" + v.toFixed(v >= 100 ? 0 : 2);
+	// First load: values count up; later: shown directly.
+	const kpi = (v, fmt, attrs, label) => `<div class="k"><b ${first ? attrs : ""}>${first ? (attrs.includes("money") ? "$0" : "0") : fmt(v)}</b><small>${label}</small></div>`;
+	const kpis = `<div class="group" id="u-kpis"><div class="usage-kpis ${first ? "stagger" : ""}">
+			${kpi(d.totals.cost, money, `data-count="${d.totals.cost}" data-money`, tt("Costo totale", "Total cost"))}
+			${kpi(d.totals.tokens, fmtTokens, `data-count="${d.totals.tokens}" data-fmt="tokens"`, tt("Token", "Tokens"))}
+			${kpi(d.totals.calls, (v) => Math.round(v).toLocaleString(lang()), `data-count="${d.totals.calls}"`, tt("Chiamate al modello", "Model calls"))}
+			${kpi(d.totals.subagentCost, money, `data-count="${d.totals.subagentCost}" data-money`, tt("di cui sub-agenti", "of which sub-agents"))}
+		</div></div>`;
+	const daily = `<div class="group" id="u-daily"><div class="gh">${tt("Ultimi 30 giorni", "Last 30 days")}</div><div class="daily">${d.daily.map((x, i) => `<i style="height:${Math.max(2, (x.cost / maxDay) * 100)}%;animation-delay:${i * 18}ms" title="${x.day}: ${fmt$(x.cost)} · ${fmtTokens(x.tokens)}"></i>`).join("")}</div></div>`;
+	const rest = `
+		<div class="group" id="u-table" style="overflow-x:auto"><table class="usage-table">
 			<thead><tr><th>${tt("Modello", "Model")}</th><th>${tt("Chiamate", "Calls")}</th><th>Input</th><th>Output</th><th>Cache</th><th>${tt("Costo", "Cost")}</th></tr></thead>
 			<tbody>${d.rows.map((r) => `<tr><td><div class="mdl">${providerBadge(r.provider)}<div><b>${esc(r.model)}</b><small>${esc(S.providers.find((p) => p.id === r.provider)?.name ?? r.provider)}</small>${r.subagentCost || r.subagentTokens ? `<span class="sub">${icon("smart_toy")} ${tt("sub-agenti", "sub-agents")} ${esc(r.agents.join(", "))}: ${fmt$(r.subagentCost)} · ${fmtTokens(r.subagentTokens)}</span>` : ""}</div></div></td><td>${r.calls}</td><td>${fmtTokens(r.input)}</td><td>${fmtTokens(r.output)}</td><td>${fmtTokens(r.cacheRead + r.cacheWrite)}</td><td><b>${fmt$(r.cost)}</b></td></tr>`).join("") || `<tr><td colspan="6" class="empty">—</td></tr>`}</tbody>
 			<tfoot><tr><td>${tt("Totale", "Total")}</td><td>${d.totals.calls}</td><td>${fmtTokens(d.totals.input)}</td><td>${fmtTokens(d.totals.output)}</td><td>${fmtTokens(d.totals.cacheRead + d.totals.cacheWrite)}</td><td>${fmt$(d.totals.cost)}</td></tr></tfoot>
 		</table></div>
-		<div class="group"><div class="gh">${tt("Per agente", "By agent")}</div>${d.byAgent.map((a) => `<div class="list-item">${icon(a.agent === "main" ? "person" : a.agent === "title" || a.agent === "compaction" ? "build" : "smart_toy")}<div class="grow"><b>${a.agent === "main" ? tt("Agente principale", "Main agent") : esc(a.agent)}</b><small>${a.calls} ${tt("chiamate", "calls")} · ${fmtTokens(a.tokens)}</small></div><b>${fmt$(a.cost)}</b></div>`).join("")}</div>
-	</div>`;
-	animateCounters(view);
-	view.querySelector("[data-range]").onclick = (e) => {
-		const b = e.target.closest("[data-v]");
-		if (b) renderUsagePage(view, b.dataset.v);
-	};
+		<div class="group" id="u-agents"><div class="gh">${tt("Per agente", "By agent")}</div>${d.byAgent.map((a) => `<div class="list-item">${icon(a.agent === "main" ? "person" : a.agent === "title" || a.agent === "compaction" ? "build" : "smart_toy")}<div class="grow"><b>${a.agent === "main" ? tt("Agente principale", "Main agent") : esc(a.agent)}</b><small>${a.calls} ${tt("chiamate", "calls")} · ${fmtTokens(a.tokens)}</small></div><b>${fmt$(a.cost)}</b></div>`).join("") || `<div class="empty">—</div>`}</div>`;
+	if (first || !$("#u-daily", body)) {
+		body.innerHTML = kpis + daily + rest;
+		animateCounters(body);
+		return;
+	}
+	const tmp = document.createElement("div");
+	tmp.innerHTML = kpis + rest;
+	for (const id of ["u-kpis", "u-table", "u-agents"]) $(`#${id}`, body).replaceWith($(`#${id}`, tmp));
 }
 
 export function renderStatsPage(view) {
