@@ -238,23 +238,32 @@ main { display: flex; flex-direction: column; min-width: 0; height: calc(100vh /
 
 .stats-card { width: min(600px, 100%); background: var(--surface-container); border-radius: var(--r-xl); padding: 20px; }
 .stats-head { display: flex; justify-content: space-between; margin-bottom: 14px; gap: 8px; flex-wrap: wrap; }
-/* connected button group */
-.tabs { display: flex; gap: 2px; }
+/* segmented buttons: one track, the selection is a pill that slides to the chosen option
+   (lib.js places .tab-pill). Track radius 20 with a 4px inset → pill radius 16 (concentric). */
+.tabs { position: relative; display: inline-flex; flex-wrap: wrap; align-items: center; align-self: flex-start; padding: 4px; background: var(--surface-high); border-radius: 20px; isolation: isolate; }
 .tabs button {
-	height: 36px; padding: 0 16px; font: 500 13px var(--font); color: var(--on-surface-variant);
-	background: var(--surface-high); border-radius: 6px;
-	transition: border-radius var(--med) var(--spring), background var(--fast), color var(--fast);
+	position: relative; z-index: 1; height: 32px; padding: 0 14px; border-radius: 16px;
+	font: 500 13px var(--font); color: var(--on-surface-variant); background: transparent;
+	display: inline-flex; align-items: center; gap: 6px; transition: color var(--fast);
 }
-.tabs button:first-child { border-radius: 18px 6px 6px 18px; }
-.tabs button:last-child { border-radius: 6px 18px 18px 6px; }
 .tabs button:hover { color: var(--on-surface); }
-.tabs button.on { background: var(--secondary-container); color: var(--on-secondary-container); border-radius: 18px; }
-/* tabs in the stats card's top corners: concentric radius = card radius − 20px padding */
-/* (Statistiche page only; the home card keeps the round pills) */
-#stats-big .stats-head .tabs button { --rc: calc(var(--r-xl) - 20px); }
-#stats-big .stats-head .tabs:first-child button:first-child:not(.on) { border-radius: var(--rc) 6px 6px var(--rc); }
-#stats-big .stats-head .tabs:last-child button:last-child:not(.on) { border-radius: 6px var(--rc) var(--rc) 6px; }
-#stats-big .stats-head .tabs button.on { border-radius: var(--rc); }
+.tabs button.on { color: var(--on-secondary-container); }
+.tabs button .ms { font-size: 18px; }
+.tab-pill {
+	position: absolute; z-index: 0; left: 0; top: 0; width: 0; height: 0; border-radius: 16px; pointer-events: none;
+	background: var(--secondary-container);
+	transition: transform var(--med) var(--spring), width var(--med) var(--spring), height var(--med) var(--spring), opacity var(--fast);
+}
+.tab-pill.instant { transition: none; }
+/* page title with its controls on the right (Statistiche, Utilizzo dettagliato) */
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.page-head h3 { margin: 0; }
+.page-head .stats-head { margin: 0; }
+/* Statistiche: the tabs live in the page title row, so the tiles sit in the card corners —
+   8px padding keeps their 20px outer corners concentric with the 28px card (like Utilizzo dettagliato) */
+#stats-big { padding: 8px; }
+#stats-big .stats-body > :not(.stat-grid) { margin-left: 12px; margin-right: 12px; }
+#stats-big .stats-body > :last-child { margin-bottom: 12px; }
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .stat { background: var(--surface-high); padding: 12px 14px; min-width: 0; border-radius: var(--r-s); transition: border-radius var(--med) var(--spring); }
 .stat:nth-child(1) { border-radius: var(--r-l) var(--r-s) var(--r-s) var(--r-s); }

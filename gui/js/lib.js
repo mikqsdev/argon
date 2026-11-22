@@ -368,11 +368,55 @@ export function enhanceSelects(root = document) {
 	root.querySelectorAll("select").forEach(enhanceSelect);
 }
 
+// ───────────────────────── segmented buttons (.tabs) ─────────────────────────
+// One track; the selection is a pill (.tab-pill) under the selected button that slides to the new
+// one. Works for every `.tabs` without touching callers: they only toggle `.on` on a button.
+function placeTabPill(tabs, animate) {
+	let pill = tabs.querySelector(":scope > .tab-pill");
+	if (!pill) {
+		pill = document.createElement("span");
+		pill.className = "tab-pill";
+		tabs.prepend(pill);
+		animate = false;
+	}
+	const on = tabs.querySelector(":scope > button.on");
+	if (!on || !on.offsetWidth) {
+		pill.style.opacity = "0";
+		return;
+	}
+	if (!animate || motion() === "off") pill.classList.add("instant");
+	pill.style.opacity = "1";
+	pill.style.width = on.offsetWidth + "px";
+	pill.style.height = on.offsetHeight + "px";
+	pill.style.transform = `translate(${on.offsetLeft}px, ${on.offsetTop}px)`;
+	if (pill.classList.contains("instant")) {
+		void pill.offsetWidth;
+		pill.classList.remove("instant");
+	}
+}
+const tabsResize = new ResizeObserver((entries) => entries.forEach((e) => placeTabPill(e.target, false)));
+function initTabs(root) {
+	const list = root.matches?.(".tabs") ? [root] : [...(root.querySelectorAll?.(".tabs") ?? [])];
+	for (const t of list) {
+		if (t._tabs) continue;
+		t._tabs = true;
+		placeTabPill(t, false);
+		tabsResize.observe(t);
+	}
+}
+
 new MutationObserver((muts) => {
-	for (const m of muts)
+	for (const m of muts) {
+		if (m.type === "attributes") {
+			const t = m.target.parentElement;
+			if (m.target.tagName === "BUTTON" && t?.classList.contains("tabs")) placeTabPill(t, true);
+			continue;
+		}
 		for (const n of m.addedNodes) {
 			if (n.nodeType !== 1) continue;
 			if (n.tagName === "SELECT") enhanceSelect(n);
 			else n.querySelectorAll?.("select").forEach(enhanceSelect);
+			initTabs(n);
 		}
-}).observe(document.documentElement, { childList: true, subtree: true });
+	}
+}).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });

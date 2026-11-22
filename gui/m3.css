@@ -75,8 +75,6 @@ select.m3-native { display: none !important; }
 /* /usage page */
 .usage-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
 /* Every card on this page keeps its content 20px from the edge (like the rest of the app). */
-.usage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
-.usage-head h3 { margin: 0; }
 .usage-table th { text-align: right; color: var(--on-surface-variant); font: 500 12px var(--font); padding: 14px 12px 10px; border-bottom: 1px solid var(--outline-variant); }
 .usage-table th:first-child, .usage-table td:first-child { padding-left: 20px; }
 .usage-table th:last-child, .usage-table td:last-child { padding-right: 20px; }
