@@ -983,7 +983,7 @@ export async function renderUsagePage(view, range = "30d") {
 	const first = !page;
 	if (first) {
 		view.innerHTML = `<div class="search-page usage-page" style="max-width:980px">
-		<div class="usage-head"><h3>${tt("Utilizzo dettagliato", "Detailed usage")}</h3>
+		<div class="page-head"><h3>${tt("Utilizzo dettagliato", "Detailed usage")}</h3>
 			<div class="tabs" data-range>${[["today", tt("Oggi", "Today")], ["7d", "7d"], ["30d", "30d"], ["all", t("all")]].map(([k, l]) => `<button data-v="${k}">${l}</button>`).join("")}</div></div>
 		<div id="usage-body">${loader(40, "center")}</div>
 	</div>`;
@@ -1030,7 +1030,7 @@ export async function renderUsagePage(view, range = "30d") {
 export function renderStatsPage(view) {
 	const L = S.limits;
 	view.innerHTML = `<div class="search-page" style="max-width:820px">
-		<h3 style="font-size:20px;margin:0 0 16px">${t("stats")}</h3>
+		<div class="page-head"><h3 style="font-size:20px">${t("stats")}</h3><div id="stats-head-host"></div></div>
 		<div class="stats-card" id="stats-big" style="width:100%"></div>
 		<h3 style="font-size:15px;margin:26px 0 10px">${t("usageLimits")}</h3>
 		<div class="group"><div class="limit-preview">${limitRowHtml(t("fiveHour"), L.fiveHour, L.unit, S.settings.limits.enabled && L.fiveHour.enabled)}${limitRowHtml(t("weekly"), L.weekly, L.unit, S.settings.limits.enabled && L.weekly.enabled)}</div></div>
@@ -1038,6 +1038,8 @@ export function renderStatsPage(view) {
 		<button class="btn sm" data-go="/settings/limits">${icon("settings")} ${tt("Configura limiti", "Configure limits")}</button>
 	</div>`;
 	animateCounters(view);
+	// the card's tabs go in the title row (not in the card's corner)
+	$("#stats-big", view)._headHost = $("#stats-head-host", view);
 	loadStatsCard($("#stats-big", view));
 	view.querySelector("[data-go]").onclick = () => go("/settings/limits");
 }

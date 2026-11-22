@@ -599,15 +599,20 @@ function renderStatsCard(box, st, range) {
 	const maxTok = Math.max(1, ...st.models.map((m) => m.tokens));
 	// The header (tabs) is built once; later clicks only move the selection and swap the body, so
 	// the buttons keep their animation state and the numbers don't count up from zero again.
-	const first = !box.querySelector(".stats-head");
+	// The tabs go inside the card (home) or in a host the page provides (Statistiche: title row).
+	const host = box._headHost ?? box;
+	const first = !$(".stats-body", box);
 	if (first) {
-		box.innerHTML = `
-		<div class="stats-head">
+		const head = `<div class="stats-head">
 			<div class="tabs" data-k="tab"><button data-v="overview">${t("overview")}</button><button data-v="models">${t("models")}</button></div>
 			<div class="tabs" data-k="range">${["all", "30d", "7d"].map((r) => `<button data-v="${r}">${r === "all" ? t("all") : r}</button>`).join("")}</div>
-		</div>
-		<div class="stats-body"></div>`;
-		box.onclick = (e) => {
+		</div>`;
+		if (host === box) box.innerHTML = head + `<div class="stats-body"></div>`;
+		else {
+			host.innerHTML = head;
+			box.innerHTML = `<div class="stats-body"></div>`;
+		}
+		host.onclick = (e) => {
 			const b = e.target.closest(".stats-head [data-v]");
 			if (!b) return;
 			const k = b.parentElement.dataset.k;
@@ -615,8 +620,8 @@ function renderStatsCard(box, st, range) {
 			loadStatsCard(box, k === "range" ? b.dataset.v : S.statsRange);
 		};
 	}
-	for (const b of box.querySelectorAll('.stats-head [data-k="tab"] button')) b.classList.toggle("on", b.dataset.v === S.statsTab);
-	for (const b of box.querySelectorAll('.stats-head [data-k="range"] button')) b.classList.toggle("on", b.dataset.v === range);
+	for (const b of host.querySelectorAll('.stats-head [data-k="tab"] button')) b.classList.toggle("on", b.dataset.v === S.statsTab);
+	for (const b of host.querySelectorAll('.stats-head [data-k="range"] button')) b.classList.toggle("on", b.dataset.v === range);
 	const body = $(".stats-body", box);
 	body.classList.toggle("calm", !first);
 	body.innerHTML = `
