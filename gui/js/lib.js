@@ -245,6 +245,21 @@ export function ringSvg(pct, size = 18) {
 // ───────────────────────── motion helpers ─────────────────────────
 export const motion = () => document.documentElement.dataset.motion || "full";
 
+/**
+ * Toggle a selection class in place. Only an item that *becomes* selected plays the pill
+ * animation (`.just-sel`); items that were already selected, or redraws, never replay it.
+ */
+export function setSel(el, on, cls = "sel") {
+	const was = el.classList.contains(cls);
+	el.classList.toggle(cls, on);
+	if (!on || was || motion() === "off") return;
+	el.classList.remove("just-sel");
+	void el.offsetWidth;
+	el.classList.add("just-sel");
+	clearTimeout(el._justSel);
+	el._justSel = setTimeout(() => el.classList.remove("just-sel"), 450);
+}
+
 /** Material ripple from the pointer position on interactive elements. */
 export function initRipples() {
 	const SEL = ".btn, .icon-btn, .nav-item, .opt, .mrow, .chip, .fab, .send, .s-item, .tabs button, .preset, .agent-card.add, .tool-line, .tools-head, .user-chip, .result, .title-btn";
