@@ -12,7 +12,13 @@ const pi = await import("@mariozechner/pi-ai");
 const core = await import("../../dist/core/index.js");
 const { startServer } = await import("../../dist/server/server.js");
 
-const faux = pi.registerFauxProvider({ provider: "demo", tokensPerSecond: 400, models: [{ id: "demo-model", name: "Demo Model", reasoning: true, contextWindow: 200000 }] });
+// ARGON_FAUX_MODELS=N adds demo-model-02…N (with prices) to test long model lists.
+const extra = Array.from({ length: Math.max(0, Number(process.env.ARGON_FAUX_MODELS ?? 1) - 1) }, (_, i) => {
+	const n = String(i + 2).padStart(2, "0");
+	return { id: `demo-model-${n}`, name: `Demo Model ${n}`, reasoning: i % 2 === 0, contextWindow: 128000, cost: { input: (i % 7) + 0.5, output: ((i % 7) + 0.5) * 4, cacheRead: 0, cacheWrite: 0 } };
+});
+const fauxModels = [{ id: "demo-model", name: "Demo Model", reasoning: true, contextWindow: 200000, cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } }, ...extra];
+const faux = pi.registerFauxProvider({ provider: "demo", tokensPerSecond: 400, models: fauxModels });
 const respond = (ctx) => {
 	if ((ctx.systemPrompt || "").includes("# Sub-agent:")) {
 		const n = ctx.messages.filter((m) => m.role === "toolResult").length;
@@ -36,7 +42,7 @@ core.saveSettings({
 	...s,
 	general: { ...s.general, userName: "Ada", autoTitle: false },
 	model: { ...s.model, default: "demo/demo-model", effort: "medium" },
-	providers: { ...s.providers, custom: [...s.providers.custom.filter((p) => p.id !== "demo"), { id: "demo", name: "Demo", baseUrl: "http://localhost", api: faux.api, models: ["demo-model"], noAuth: true, reasoning: true }] },
+	providers: { ...s.providers, custom: [...s.providers.custom.filter((p) => p.id !== "demo"), { id: "demo", name: "Demo", baseUrl: "http://localhost", api: faux.api, models: fauxModels.map((m) => m.id), noAuth: true, reasoning: true }] },
 	limits: { ...s.limits, enabled: true, unit: "cost", fiveHour: { enabled: true, value: 10, mode: "block" }, weekly: { enabled: true, value: 60, resetDay: 3, resetHour: 9 } },
 	permissions: { ...s.permissions, mode: process.env.ARGON_FAUX_MODE ?? "auto" },
 	cli: { ...s.cli, language: process.env.ARGON_LANG ?? "en" },

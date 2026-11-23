@@ -1,5 +1,5 @@
 import { api, esc, $, $$, el, icon, t, tt, lang, modal, toast, fmtTokens, fmtAmount, debounce, relTime, loader, staggerOnce, setSel } from "./lib.js";
-import { S, go, saveSettings, reloadBoot, loadStatsCard, limitRowHtml, refreshSessions, applyTheme, revealTransition, spendHtml, animateCounters, providerBadge, setEnv, renameEnv, confirmDeleteEnv } from "./app.js";
+import { S, go, saveSettings, touchSettings, reloadBoot, loadStatsCard, limitRowHtml, refreshSessions, applyTheme, revealTransition, spendHtml, animateCounters, providerBadge, setEnv, renameEnv, confirmDeleteEnv } from "./app.js";
 import { PRESETS, SCHEME_NAMES, buildScheme } from "./theme.js";
 
 // ───────────────────────── generic settings form helpers ─────────────────────────
@@ -67,7 +67,8 @@ function pageShell(view, title, tabs, cur, base) {
 		view.innerHTML = `<div class="page" data-sig="${esc(sig)}"><nav class="page-nav"><h2>${title}</h2>${tabs.map(([id, ic, l]) => `<button class="nav-item" data-go="${base}/${id}">${icon(ic)} ${l}</button>`).join("")}</nav><div class="page-body" id="page-body"></div></div>`;
 		view.querySelector(".page-nav").onclick = (e) => {
 			const b = e.target.closest("[data-go]");
-			if (b) go(b.dataset.go);
+			// the section already open: nothing to do (re-rendering would replay its animations)
+			if (b && !b.classList.contains("sel")) go(b.dataset.go);
 		};
 	}
 	for (const b of view.querySelectorAll(".page-nav .nav-item")) {
@@ -159,9 +160,12 @@ function appearance(b) {
 	const save = debounce(() => saveSettings(S.settings, true), 400);
 	const apply = (fn, ev) => {
 		const r = ev?.target?.getBoundingClientRect?.();
+		// Record the choice right away (not inside the animation callback): with quick clicks a newer
+		// transition can interrupt this one, and the newest state must always win.
+		fn();
+		touchSettings();
 		revealTransition(
 			() => {
-				fn();
 				applyTheme();
 				appearance(b);
 			},
@@ -187,6 +191,7 @@ function appearance(b) {
 		live();
 		if (e.target.matches("[data-color]") || (e.target.matches("[data-hex]") && /^#[0-9a-f]{6}$/i.test(e.target.value))) {
 			Object.assign(ap, { seed: e.target.value.toLowerCase(), preset: "custom" });
+			touchSettings();
 			applyTheme();
 			$(".hexdot", b).style.background = ap.seed;
 			if (e.target.matches("[data-color]")) $("[data-hex]", b).value = ap.seed;
@@ -194,6 +199,7 @@ function appearance(b) {
 		}
 		if (e.target.matches("[data-scale]")) {
 			ap.scale = Number(e.target.value);
+			touchSettings();
 			e.target.closest(".field").querySelector("small").textContent = ap.scale + "%";
 			applyTheme();
 			save();

@@ -185,10 +185,35 @@ function placeMenu(p, anchor, opts) {
 	p.style.top = Math.max(8, Math.min(top, innerHeight - ph - 8)) + "px";
 }
 /** Open a menu. level 0 = root (closes all others), level 1+ = cascading submenu. */
+/** Same menu button? (by element, or by its role when the button was re-rendered meanwhile) */
+function sameAnchor(a, b) {
+	if (!a || !b) return false;
+	if (a === b) return true;
+	const key = (x) => (x.dataset?.chip ? "chip:" + x.dataset.chip + ":" + (x.closest("[data-kind]")?.dataset.kind ?? "") : x.dataset?.act ? "act:" + x.dataset.act : "");
+	return !!key(a) && key(a) === key(b);
+}
+
+/**
+ * Open a menu next to `anchor`. Pressing the button of a menu that is already open closes it
+ * (instead of closing on mousedown and reopening on click, which replayed the opening animation):
+ * the caller then gets a detached, inert copy so its setup code still runs harmlessly.
+ */
 export function popover(anchor, html, opts = {}) {
 	const level = opts.level ?? 0;
+	const inert = () => {
+		const d = el(`<div class="pop ${opts.cls || ""}">${html}</div>`);
+		d.reposition = () => {};
+		return d;
+	};
+	if (level === 0 && menuStack.length && sameAnchor(menuStack[0]._anchor, anchor)) {
+		closePop();
+		return inert();
+	}
+	// a submenu of a menu that is not open (e.g. after a toggle-close) is not shown either
+	if (level > 0 && !anchor.isConnected) return inert();
 	closePop(level);
 	const p = el(`<div class="pop ${opts.cls || ""}" data-level="${level}">${html}</div>`);
+	p._anchor = anchor;
 	document.body.appendChild(p);
 	placeMenu(p, anchor, opts);
 	p.reposition = () => placeMenu(p, anchor, opts);
@@ -196,7 +221,11 @@ export function popover(anchor, html, opts = {}) {
 	if (level === 0)
 		setTimeout(() => document.addEventListener("mousedown", function h(e) {
 			if (!menuStack.length) return document.removeEventListener("mousedown", h);
-			if (!menuStack.some((m) => m.contains(e.target))) { closePop(); document.removeEventListener("mousedown", h); }
+			if (menuStack.some((m) => m.contains(e.target))) return;
+			// pressing this menu's own button: leave it to the click, which closes it (see above)
+			if (menuStack[0]._anchor?.contains(e.target)) return;
+			closePop();
+			document.removeEventListener("mousedown", h);
 		}), 0);
 	if (opts.focus !== false) p.querySelector("input")?.focus();
 	return p;
@@ -244,6 +273,43 @@ export function ringSvg(pct, size = 18) {
 
 // ───────────────────────── motion helpers ─────────────────────────
 export const motion = () => document.documentElement.dataset.motion || "full";
+
+/**
+ * Replace el's content with a horizontal slide: the old content leaves towards -dir, the new one
+ * comes in from +dir, and the height morphs between the two. dir: 1 = next option (to the right),
+ * -1 = previous, 0 = swap at once. A dir-0 update during the slide-out just replaces what will
+ * slide in, so late data never interrupts the animation.
+ */
+export function slideSwap(el, html, dir = 0) {
+	if (!dir && el._sliding) {
+		el._slideHtml = html;
+		return;
+	}
+	const tok = (el._slideTok = (el._slideTok ?? 0) + 1);
+	el.getAnimations().forEach((a) => a.cancel());
+	if (!dir || motion() === "off") {
+		el._sliding = false;
+		el.innerHTML = html;
+		return;
+	}
+	const dx = motion() === "reduced" ? 0 : 32 * dir;
+	const h0 = el.offsetHeight;
+	el._sliding = true;
+	el._slideHtml = html;
+	const out = el.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: `translateX(${-dx}px)` }], { duration: 140, easing: "cubic-bezier(0.3, 0, 1, 1)", fill: "forwards" });
+	out.finished
+		.then(() => {
+			if (el._slideTok !== tok) return;
+			el._sliding = false;
+			el.innerHTML = el._slideHtml;
+			out.cancel();
+			const h1 = el.offsetHeight;
+			const ease = "cubic-bezier(0.2, 0, 0, 1)";
+			el.animate([{ opacity: 0, transform: `translateX(${dx}px)` }, { opacity: 1, transform: "none" }], { duration: 340, easing: ease, fill: "backwards" });
+			if (h0 !== h1) el.animate([{ height: h0 + "px" }, { height: h1 + "px" }], { duration: 340, easing: ease });
+		})
+		.catch(() => {});
+}
 
 /**
  * Toggle a selection class in place. Only an item that *becomes* selected plays the pill
