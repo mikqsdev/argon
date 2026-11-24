@@ -81,9 +81,14 @@ select.m3-native { display: none !important; }
 .usage-table th:first-child, .usage-table td:first-child { text-align: left; }
 .usage-table td { text-align: right; padding: 10px 12px; border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 50%, transparent); font-variant-numeric: tabular-nums; }
 .usage-table tr:last-child td { border-bottom: 0; }
-.usage-table .mdl { display: flex; align-items: center; gap: 10px; }
-.usage-table .mdl small { display: block; color: var(--on-surface-variant); }
-.usage-table .sub { color: var(--tertiary); font-size: 11.5px; display: block; }
+/* model cell: badge + three lines on a steady rhythm (name 18px, provider 16px, sub-agents 16px) */
+.usage-table tbody td { padding-top: 12px; padding-bottom: 12px; }
+.usage-table .mdl { display: flex; align-items: center; gap: 12px; }
+.usage-table .mdl > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; }
+.usage-table .mdl b { font: 600 13.5px/18px var(--font); }
+.usage-table .mdl small { display: block; color: var(--on-surface-variant); font-size: 12px; line-height: 16px; }
+.usage-table .sub { display: inline-flex; align-items: center; gap: 4px; color: var(--tertiary); font-size: 11.5px; line-height: 16px; }
+.usage-table .sub .ms { font-size: 14px; line-height: 1; color: inherit; }
 .usage-table tfoot td { font-weight: 700; border-top: 2px solid var(--outline-variant); }
 .daily { display: flex; align-items: flex-end; gap: 3px; height: 120px; padding: 12px 20px 20px; box-sizing: content-box; }
 .daily i { flex: 1; min-width: 4px; background: var(--primary); border-radius: 6px 6px 2px 2px; opacity: 0.85; animation: grow-h 700ms var(--spring) both; transform-origin: bottom; }
@@ -108,3 +113,16 @@ select.m3-native { display: none !important; }
 .card .why { display: inline-flex; align-items: center; gap: 6px; font: 600 12px var(--font); color: var(--on-tertiary-container); background: var(--tertiary-container); border-radius: var(--r-full); padding: 3px 10px; margin-bottom: 8px; }
 .card .why .ms { font-size: 16px; }
 .below { flex-wrap: nowrap; } .below .chip { min-width: 0; flex-shrink: 1; }
+
+/* ════════ palette-coloured texts ════════
+   Texts that used a single palette colour (titles, links, outlined buttons, sub-agent lines…) are a
+   gradient of the chosen palette instead: primary → secondary → tertiary. */
+:root { --grad-text: linear-gradient(100deg, var(--primary), var(--secondary), var(--tertiary)); }
+.group > .gh, a:not(.btn), .md a, .limits-pop .head a, .pr-list a, .import-count, .usage-table .sub, .slash-menu .opt b,
+.btn:not(.pri):not(.tonal):not(.danger):not(.danger-fill) {
+	background-image: var(--grad-text); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+a:not(.btn), .md a { text-decoration-color: color-mix(in srgb, var(--primary) 60%, transparent); }
+/* hover layer and ripple used the text colour, now transparent: give them the primary colour */
+.btn:not(.pri):not(.tonal):not(.danger):not(.danger-fill)::before,
+.btn:not(.pri):not(.tonal):not(.danger):not(.danger-fill) .ripple { background: var(--primary); }

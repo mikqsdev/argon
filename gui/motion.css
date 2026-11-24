@@ -51,12 +51,16 @@ body, .pane, .rightpanel, .composer, .group, .card, .pop, .stats-card, .rp-sec, 
 .msg-user.enter .bubble { animation: bubble-in 480ms var(--spring) both; transform-origin: bottom right; }
 
 /* greeting & home */
-.hello .words { background-image: linear-gradient(100deg, var(--on-surface) 20%, var(--primary) 45%, var(--tertiary) 60%, var(--on-surface) 85%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: hue 9s linear infinite; }
+/* gradient texts use the chosen palette: primary → secondary → tertiary (and back, so the sweep loops seamlessly) */
+.hello .words { background-image: linear-gradient(100deg, var(--primary), var(--secondary), var(--tertiary), var(--secondary), var(--primary)); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: hue 9s linear infinite; }
 @keyframes hue { to { background-position: -200% 0; } }
 .hello .words b { display: inline-block; font-weight: inherit; animation: word-in 700ms var(--spring) both; animation-delay: calc(var(--i) * 70ms + 80ms); background: inherit; background-size: inherit; -webkit-background-clip: text; background-clip: text; color: transparent; }
 @keyframes word-in { from { opacity: 0; transform: translateY(0.45em) rotate(4deg); filter: blur(6px); } }
 .home .tile { animation: blob 9s var(--emph) infinite alternate, pop-in 700ms var(--spring) both; }
-.heat i { animation: pop-in 420ms var(--spring) both; animation-delay: calc(var(--d, 0) * 14ms); }
+/* activity map: one reveal of the whole grid, left to right (a single animated element — animating
+   ~190 dots one by one made parts of the map flicker in the desktop app until they settled) */
+.heat { animation: heat-in 700ms var(--emph) both; }
+@keyframes heat-in { from { clip-path: inset(0 100% 0 0); opacity: 0.3; } to { clip-path: inset(0 0 0 0); opacity: 1; } }
 .stat { transition: border-radius var(--med) var(--spring), transform var(--med) var(--spring), background var(--fast); }
 .stat:hover { transform: translateY(-2px) scale(1.02); background: var(--surface-highest); }
 
@@ -96,7 +100,7 @@ body, .pane, .rightpanel, .composer, .group, .card, .pop, .stats-card, .rp-sec, 
 
 /* motion preference */
 [data-motion="off"] *, [data-motion="off"] *::before, [data-motion="off"] *::after { animation: none !important; transition: none !important; }
-[data-motion="reduced"] :is(.stagger > *, .pop > *, .mrows > *, .transcript > .enter, .hello .words b, .heat i, .card.approval, .msg-user .bubble) { animation: fade 240ms linear both !important; }
+[data-motion="reduced"] :is(.stagger > *, .pop > *, .mrows > *, .transcript > .enter, .hello .words b, .heat, .card.approval, .msg-user .bubble) { animation: fade 240ms linear both !important; }
 [data-motion="reduced"] :is(.tile, .bar i, .shimmer, .hello .words, .send, .card.approval .ttl .ms, .chip[data-chip="limits"]) { animation: none !important; }
 [data-motion="reduced"] .ripple { display: none; }
 [data-motion="reduced"]::view-transition-new(pane), [data-motion="reduced"]::view-transition-old(pane) { animation: 200ms linear both fade; }
@@ -148,7 +152,7 @@ body, .pane, .rightpanel, .composer, .group, .card, .pop, .stats-card, .rp-sec, 
 .spend-head .ms { color: var(--primary); }
 .spend-note { color: var(--on-surface-variant); font: 400 11.5px var(--font); }
 .spend-today { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }
-.spend-today .big { font: 700 38px/44px var(--font); font-stretch: 118%; letter-spacing: -1px; font-variant-numeric: tabular-nums; background: linear-gradient(100deg, var(--primary), var(--tertiary)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.spend-today .big { font: 700 38px/44px var(--font); font-stretch: 118%; letter-spacing: -1px; font-variant-numeric: tabular-nums; background: linear-gradient(100deg, var(--primary), var(--secondary), var(--tertiary)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .spend-today .lbl { color: var(--on-surface-variant); font-size: 13px; }
 .spend-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 .spend-grid .sg { background: var(--surface-high); padding: 8px 10px; display: flex; flex-direction: column; border-radius: 6px; min-width: 0; }

@@ -1,4 +1,4 @@
-import { api, connectWs, esc, $, $$, el, icon, t, tt, setLang, lang, md, popover, closePop, modal, prompt, toast, ringSvg, fmtTokens, fmtAmount, debounce, relTime, loader, initRipples, staggerOnce, burst, viewTransition, motion, token, setSel } from "./lib.js";
+import { api, connectWs, esc, $, $$, el, icon, t, tt, setLang, lang, md, popover, closePop, modal, prompt, toast, ringSvg, fmtTokens, fmtAmount, debounce, relTime, loader, initRipples, staggerOnce, burst, viewTransition, motion, token, setSel, slideSwap } from "./lib.js";
 import { applyAppearance } from "./theme.js";
 import { renderSettings, renderCustomize, renderStatsPage, renderSearch, openFolderModal, onOAuthEvent, renderUsagePage } from "./pages.js";
 
@@ -63,9 +63,12 @@ async function boot() {
 }
 
 async function loadBoot() {
+	const gen = S.settingsGen;
 	const b = await api("/bootstrap");
 	S.boot = b;
-	S.settings = b.settings;
+	// keep local edits that the server has not confirmed yet (see touchSettings)
+	if (!S.settingsUnsaved && S.settingsGen === gen) S.settings = b.settings;
+	else b.settings = S.settings;
 	S.sessions = b.sessions;
 	S.environments = b.environments;
 	S.models = b.models;
@@ -111,17 +114,36 @@ export function revealTransition(fn, x = innerWidth - 40, y = 40) {
 	if (!document.startViewTransition || document.documentElement.dataset.motion === "off") return fn();
 	const r = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
 	const vt = document.startViewTransition(fn);
-	vt.ready.then(() =>
-		document.documentElement.animate({ clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${r}px at ${x}px ${y}px)`] }, { duration: 650, easing: "cubic-bezier(0.2, 0, 0, 1)", pseudoElement: "::view-transition-new(root)" }),
-	);
+	vt.ready
+		.then(() =>
+			document.documentElement.animate({ clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${r}px at ${x}px ${y}px)`] }, { duration: 650, easing: "cubic-bezier(0.2, 0, 0, 1)", pseudoElement: "::view-transition-new(root)" }),
+		)
+		.catch(() => {}); // skipped by a newer change: that one animates instead
+	vt.updateCallbackDone?.catch(() => {});
 }
 
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => S.settings?.general.theme === "system" && applyTheme());
 
 if (window.argonDesktop) document.documentElement.classList.add("desktop");
 
+/**
+ * Local edits to S.settings are counted (S.settingsGen) and stay "unsaved" until a save of the
+ * latest generation comes back. Older save responses and WebSocket reloads never overwrite newer
+ * local edits — otherwise changing Appearance quickly lost the last clicks.
+ */
+export function touchSettings() {
+	S.settingsGen = (S.settingsGen ?? 0) + 1;
+	S.settingsUnsaved = true;
+}
+
 export async function saveSettings(next, quiet) {
-	S.settings = await api("/settings", { method: "PUT", body: next });
+	touchSettings();
+	const gen = S.settingsGen;
+	const saved = await api("/settings", { method: "PUT", body: next });
+	if (S.settingsGen === gen) {
+		S.settings = saved;
+		S.settingsUnsaved = false;
+	}
 	setLang(S.settings.general.language);
 	applyTheme();
 	if (!quiet) toast(t("saved"));
@@ -261,9 +283,13 @@ export function renderSidebar() {
 	}
 	side.onclick = (e) => {
 		const g = e.target.closest("[data-go]");
+		// the page already open (selected item, or the same address): nothing to re-render
+		if (g && (g.classList.contains("sel") || location.hash === "#" + g.dataset.go)) return;
 		if (g) return go(g.dataset.go);
 		const s = e.target.closest("[data-sid]");
 		if (s && e.target.closest(".more")) return sessionMenu(e.target.closest(".more"), s.dataset.sid);
+		// The session already on screen: nothing to do (re-rendering would replay its animations).
+		if (s && S.route === "s" && S.cur?.meta.id === s.dataset.sid && $("#transcript")) return;
 		if (s) return go("/s/" + s.dataset.sid);
 		const a = e.target.closest("[data-act]")?.dataset.act;
 		if (a === "toggle") toggleSidebar();
@@ -614,7 +640,10 @@ function renderStatsCard(box, st, range) {
 		}
 		host.onclick = (e) => {
 			const b = e.target.closest(".stats-head [data-v]");
-			if (!b) return;
+			if (!b || b.classList.contains("on")) return;
+			// slide towards the chosen option: right of the current one → content moves left
+			const group = [...b.parentElement.querySelectorAll("button")];
+			box._slideDir = Math.sign(group.indexOf(b) - group.findIndex((x) => x.classList.contains("on")));
 			const k = b.parentElement.dataset.k;
 			if (k === "tab") S.statsTab = b.dataset.v;
 			loadStatsCard(box, k === "range" ? b.dataset.v : S.statsRange);
@@ -624,16 +653,22 @@ function renderStatsCard(box, st, range) {
 	for (const b of host.querySelectorAll('.stats-head [data-k="range"] button')) b.classList.toggle("on", b.dataset.v === range);
 	const body = $(".stats-body", box);
 	body.classList.toggle("calm", !first);
-	body.innerHTML = `
+	const html = `
 		${S.statsTab === "overview"
 			? `<div class="stat-grid">${stats.map(([k, v, raw, fmtT]) => `<div class="stat"><div class="k">${k}</div><div class="v" title="${esc(v)}" ${typeof raw === "number" ? `data-count="${raw}" ${fmtT ? 'data-fmt="tokens"' : ""}` : ""}>${esc(v)}</div></div>`).join("")}</div>
 			   <div class="heat">${heatCells(st.days)}</div>`
 			: `<div class="model-rows">${st.models.slice(0, 8).map((m) => `<div class="model-row"><span>${esc(m.model)} <span style="color:var(--muted);font-size:12px">${esc(m.provider)}</span></span><span>${fmtTokens(m.tokens)}</span><span style="color:var(--muted)">$${m.cost.toFixed(2)}</span><div class="barwrap"><i style="width:${(m.tokens / maxTok) * 100}%"></i></div></div>`).join("") || `<div class="empty">—</div>`}</div>`}
 		<div class="fun">${esc(st.funFact)} · ${tt("Spesa equivalente", "Equivalent spend")} $${st.totalCost.toFixed(2)}</div>`;
 	if (first) {
+		body.innerHTML = html;
 		animateCounters(body);
 		staggerOnce($(".stat-grid", body));
+		return;
 	}
+	// Tab / range change: slide (direction set by the click); later data refreshes swap in place.
+	const dir = box._slideDir ?? 0;
+	box._slideDir = 0;
+	slideSwap(body, html, dir);
 }
 
 export function heatCells(days, weeks = 26) {
@@ -653,7 +688,7 @@ export function heatCells(days, weeks = 26) {
 			const k = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 			const v = days[k] || 0;
 			const l = v === 0 ? 0 : Math.min(4, 1 + Math.floor((v / max) * 3.99));
-			out += `<i class="l${l}" style="--d:${w}" title="${k}: ${fmtTokens(v)}"></i>`;
+			out += `<i class="l${l}" title="${k}: ${fmtTokens(v)}"></i>`;
 		}
 	return out;
 }
@@ -740,9 +775,28 @@ function chipsHtml(kind) {
 	return `
 		${kind === "home" ? `<button class="chip" data-chip="env">${icon("monitor")}<span>${esc(env?.name ?? t("noEnv"))}</span>${icon("down")}</button>` : `<span class="chip" title="${esc(S.cur?.meta.cwd)}">${icon("folder")}<span>${esc(env?.name ?? S.cur?.meta.cwd.split(/[\\/]/).pop())}</span></span>`}
 		<div class="spacer"></div>
-		<button class="chip" data-chip="model">${providerBadge(o.model.split("/")[0], "xs")}<span>${esc(modelLabel(o.model))}</span>${modelReasoning(o.model) ? `<span class="dim">${esc(effortLabel(resolveEffortFor(modelInfo(o.model), o.effort)))}</span>` : ""}${icon("down")}</button>
+		${modelChipHtml(o)}
 		<button class="chip ${mi.cls}" data-chip="mode" title="Shift+Tab"><span>${esc(mi.label)}</span></button>
 		${showRing ? `<button class="chip" data-chip="limits" title="${t("usageLimits")}">${ringSvg(S.settings.limits.enabled ? maxPct : 0)}</button>` : ""}`;
+}
+
+/** Model chip: name (+ effort) and, in small below, the model's price — no need to open the menu. */
+function modelChipHtml(o) {
+	const prov = (o.model || "").split("/")[0];
+	const m = modelInfo(o.model);
+	// Price unknown yet (model only in the provider's live list): load that list once, then redraw.
+	if (!m && prov && !(S.priceFetch ??= new Set()).has(prov) && S.providers.some((p) => p.id === prov && p.connected)) {
+		S.priceFetch.add(prov);
+		api(`/providers/${encodeURIComponent(prov)}/models`)
+			.then((d) => {
+				S.provModels[prov] ??= d;
+				if (modelInfo(o.model)) refreshChips();
+			})
+			.catch(() => {});
+	}
+	const price = m ? fmtPrice(m.cost) + (m.cost && (m.cost.input || m.cost.output) ? ` ${tt("per 1M", "per 1M")}` : "") + (m.estimated ? "*" : "") : "";
+	const tip = m ? `${tt("Prezzo per milione di token, input / output", "Price per million tokens, input / output")}${m.estimated ? " · " + tt("stimato", "estimated") : ""}` : "";
+	return `<button class="chip model-chip ${price ? "has-price" : ""}" data-chip="model" title="${esc(tip)}">${providerBadge(prov, "xs")}<span class="mc"><span class="mc-name"><span>${esc(modelLabel(o.model))}</span>${modelReasoning(o.model) ? `<span class="dim">${esc(effortLabel(resolveEffortFor(m, o.effort)))}</span>` : ""}</span>${price ? `<span class="mc-price">${esc(price)}</span>` : ""}</span>${icon("down")}</button>`;
 }
 
 export function refreshChips() {
@@ -1105,9 +1159,11 @@ async function openProviderMenu(row, prov, kind) {
 		const list = data.models.filter((m) => !q || m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
 		const ago = data.fetchedAt ? relTime(data.fetchedAt, lang()) : "";
 		$("[data-status]", sub).innerHTML = `${data.models.length} ${tt("modelli", "models")}${data.live ? ` · ${tt("dal provider", "from provider")} ${ago}` : ` · ${tt("catalogo integrato", "built-in catalog")}`}${data.error ? ` · <span class="err" title="${esc(data.error)}">${tt("aggiornamento non riuscito", "refresh failed")}</span>` : ""}`;
+		// show up to 400 rows, but always far enough to include the selected model
+		const selIdx = list.findIndex((m) => prov + "/" + m.id === o.model);
 		$(".mrows", sub).innerHTML =
 			list
-				.slice(0, 400)
+				.slice(0, Math.max(400, selIdx + 1))
 				.map((m) => {
 					const key = prov + "/" + m.id;
 					const on = o.model === key;
@@ -1120,7 +1176,17 @@ async function openProviderMenu(row, prov, kind) {
 				})
 				.join("") || `<div class="empty">${t("noResults")}</div>`;
 		sub.reposition();
+		// On opening (no search typed yet) bring the selected model into view, centred in the list.
+		if (!q && !scrolled) {
+			const rows = $(".mrows", sub);
+			const on = $(".mrow.on", rows);
+			if (on) {
+				rows.scrollTop = on.offsetTop - (rows.clientHeight - on.offsetHeight) / 2;
+				scrolled = true;
+			}
+		}
 	};
+	let scrolled = false;
 	const load = async (force) => {
 		if (force || !data) {
 			$(".mrows", sub).innerHTML = loader(36, "center");
