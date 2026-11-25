@@ -5,7 +5,7 @@
 # Argon
 
 **An open-source AI agent with a full-screen Rust CLI and a Material 3 desktop app (Tauri).**
-Any provider · live model catalogs · MCP · skills · sub-agents · usage limits · GitHub PRs
+Any provider · live model catalogs · MCP · skills · sub-agents · usage limits · GitHub PRs · controllable by other AI agents
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-7c4dff)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/mikqsdev/argon?color=7c4dff)](https://github.com/mikqsdev/argon/releases)
@@ -14,7 +14,7 @@ Any provider · live model catalogs · MCP · skills · sub-agents · usage limi
 
 <sub>Ar · 18 · 39.948 — the noble gas that glows violet when ionised.</sub>
 
-<img src="docs/screenshots/session.png" alt="Argon desktop app: a session with two sub-agents working in parallel" width="900">
+<img src="docs/screenshots/session.png" alt="Argon desktop app: a sub-agent mapping the project, the session's pull requests and background tasks in the side panel" width="900">
 
 </div>
 
@@ -36,6 +36,8 @@ Argon (Tauri app) ─webview──┘
 | 📡 **Live model catalogs** | Model lists come straight from each provider (OpenRouter: 470+ models with prices and context). Reasoning levels are read **per model** from the provider — including `max`, the provider's default and whether reasoning can be turned off. |
 | 🧭 **Usage limits** | Optional 5-hour and weekly limits, in tokens or dollars, with a ring indicator, alerts near the threshold and a spending counter (today, 5h, week, month, total — sub-agents included). |
 | 🤖 **Sub-agents** | `explore`, `general`, `research`, `reviewer`, `planner` + your own (`.md` files, Claude Code compatible). They run in parallel, each with its own model, tools and effort, with live progress. |
+| 🤝 **Controlled by other agents** | Optional (off by default): Argon is an MCP server, so Claude Code, Claude Desktop, Cursor, Codex — and Argon's own agent — can change its look, create sub-agents and skills, connect MCP servers, start and message sessions, and more. |
+| 💬 **Talk while it works** | `Enter` steers the agent after its current step; `Ctrl+Enter` (or right-click on Send) queues a message for when it has finished; `/btw <question>` gets a side answer from a read-only sub-agent without interrupting or touching the conversation. |
 | 🧰 **Tools & MCP** | read/write/edit, shell (with background processes), grep/glob, web search & fetch, todo, memory, skills, ask-user, and any MCP server (stdio, HTTP, SSE). |
 | 🛡️ **Environment sandbox** | Inside an environment, writing outside its folder always asks first — even in Auto mode. |
 | 🐙 **GitHub** | Connect a token or the GitHub CLI and open pull requests from a session (`/pr` or the *Create PR* button). |
@@ -45,6 +47,10 @@ Argon (Tauri app) ─webview──┘
 ## Screenshots
 
 <table>
+<tr>
+<td width="50%"><img src="docs/screenshots/agent-control.png" alt="AI agent control"><br><sub><b>AI agent control</b> — Argon as an MCP server for Claude Code, Claude Desktop, Cursor, Codex and its own agent (off by default)</sub></td>
+<td width="50%"><img src="docs/screenshots/composer.png" alt="Talking while the agent works"><br><sub><b>While it works</b> — a <code>/btw</code> side answer, messages queued with Ctrl+Enter, a highlighted command and a bulleted list</sub></td>
+</tr>
 <tr>
 <td width="50%"><img src="docs/screenshots/cli-session.png" alt="Argon CLI"><br><sub><b>CLI</b> — full-screen terminal UI with a fixed input box, status row, cost and usage ring</sub></td>
 <td width="50%"><img src="docs/screenshots/cli-usage.png" alt="Argon CLI /usage"><br><sub><b>/usage</b> — cost per model, provider and sub-agent, with a 30-day chart</sub></td>
@@ -123,17 +129,19 @@ It connects to the core the desktop app is running. If the app isn't running, it
 | `Esc` | stop the agent · close menus |
 | `↑ ↓` | history / move in menus · type to search in any menu |
 | `\` + Enter, `Alt+Enter` | new line |
+| `Enter` while it works | send now: the agent reads it after its current step |
+| `Ctrl+Enter` while it works | queue: sent when the agent has finished (`⧗ n` in the status row) |
 | `Ctrl+C` twice | exit |
 
-Commands (all GUI features are available): `/new /resume /sessions /search /rename /pin /archive /delete /export /clear /compact /undo /todos /context /model /effort /mode /login /logout /providers /github /pr /limits /usage /stats /mcp /agents /subagents /bgterminals /skills /memory /hooks /env /settings /init /gui /help /exit`, plus your custom commands and skills.
+Commands (all GUI features are available): `/new /resume /sessions /search /rename /pin /archive /delete /export /clear /compact /undo /todos /context /btw /model /effort /mode /login /logout /providers /github /pr /limits /usage /stats /mcp /agents /subagents /bgterminals /skills /memory /hooks /env /settings /init /gui /help /exit`, plus your custom commands and skills.
 
 `/settings` holds the CLI's own preferences (language, colours, animations, timestamps, which sessions to show, limit alerts) — independent from the GUI and also editable in *GUI → Settings → CLI*. By default `/resume` and `/sessions` show the sessions of the environment you are in.
 
 ## The desktop app
 
-- **Sidebar** — new session, search, customise, statistics, the current **environment** card and its sessions.
-- **Composer** — attachments, dictation (browser version), environment, provider → model menu, effort, permission mode and the usage ring.
-- **Session** — streaming transcript with grouped tools, diffs, sub-agent cards with live steps, approval cards, task list; right panel with environment, git branch, context, connectors, changes + **Create PR**, session git (PRs, commits), background terminals and cost.
+- **Sidebar** — new session, search, customise, statistics, the current **environment** card and its sessions (grouped by date, groups fold; a session with a pull request shows its number, coloured by state).
+- **Composer** — attachments, dictation (browser version), environment, provider → model menu with prices, effort, permission mode and the usage ring. A recognised `/command` is highlighted in the palette colours; `- ` at the start of a line becomes a bullet (`Shift+Enter` continues the list, `Tab` nests an item, `Backspace` after a bullet steps out or removes it); it is sent as Markdown. While the agent works, `Ctrl+Enter` or right-click on Send queues the message (queued messages can be edited, sent now or removed above the composer), and `/btw` answers appear in a card there too.
+- **Session** — streaming transcript with grouped tools, diffs, sub-agent cards with live steps, approval cards, task list; right panel with environment, git branch, context, connectors, **Changes** (the session's pull requests with live state — open, merged, closed, draft — `+/−` and checks, plus uncommitted files and **Create PR**), session commits, **background tasks** (running time, stop, finished ones folded) and cost. Pull requests the agent opens with `gh pr create` are picked up automatically.
 - **Settings** — General, Appearance, Providers & accounts (with favicons), GitHub, Models, Usage limits, Permissions (sandbox), Tools, Context (`/init` file name), Environments, CLI, Advanced (raw JSON).
 - **Customise** — MCP connectors, sub-agents, skills, commands, memory, hooks.
 - **/usage** — detailed usage per model and provider, sub-agents itemised.
@@ -170,6 +178,19 @@ You are a meticulous tester…
 - **Instructions** — `~/.argon/ARGON.md`, plus `ARGON.md` / `AGENTS.md` / `CLAUDE.md` from the repo root down. `/init` writes the file named in *Settings → Context*.
 - **Memory** — facts saved across sessions (global or per project).
 - **Hooks** — shell commands on `sessionStart`, `userPrompt`, `preToolUse` (exit code 2 blocks), `postToolUse`, `stop`.
+
+### AI agent control (Argon as an MCP server)
+Off by default. Turn it on in *Settings → AI agent control*, choose what agents may touch (look and settings · sub-agents, skills, commands and memory · MCP connectors · sessions · permissions and hooks, the last one off by default), then add Argon to your client with the snippet shown there:
+
+```bash
+claude mcp add argon -- argon mcp serve          # Claude Code
+```
+
+```json
+{ "mcpServers": { "argon": { "command": "argon", "args": ["mcp", "serve"] } } }
+```
+
+`argon mcp serve` speaks MCP over stdio and forwards to the open Argon app (changes show up live); with the app closed it runs Argon in the background. Clients that connect by URL can use a fixed port (`http://127.0.0.1:<port>/mcp` with `Authorization: Bearer <token>`, both shown in settings). The same 32 tools are pre-installed in Argon as the built-in **Argon** connector, so you can also ask Argon itself to “switch to the green palette” or “create a translator sub-agent”; in Ask mode each action asks for confirmation.
 
 ### GitHub
 Connect a personal access token (`repo`, `workflow`) in *Settings → GitHub* or with `/github`, or just be signed in to the GitHub CLI (`gh auth login`). Then `/pr` (or *Create PR*) commits pending changes, pushes a branch and opens the pull request with `gh`.
