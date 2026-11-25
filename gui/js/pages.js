@@ -105,10 +105,11 @@ export function renderSettings(view, tab) {
 		["context", "book", tt("Contesto", "Context")],
 		["environments", "monitor", tt("Ambienti", "Environments")],
 		["cli", "terminal", "CLI"],
+		["control", "smart_toy", tt("Controllo agenti AI", "AI agent control")],
 		["advanced", "sliders", tt("Avanzate", "Advanced")],
 	];
 	const body = pageShell(view, t("settings"), tabs, tab, "/settings");
-	const R = { general, appearance, providers, github, models, limits, permissions, tools, context, environments, cli, advanced }[tab] ?? general;
+	const R = { general, appearance, providers, github, models, limits, permissions, tools, context, environments, cli, control, advanced }[tab] ?? general;
 	R(body);
 }
 
@@ -197,16 +198,18 @@ function appearance(b) {
 			if (e.target.matches("[data-color]")) $("[data-hex]", b).value = ap.seed;
 			save();
 		}
-		if (e.target.matches("[data-scale]")) {
-			ap.scale = Number(e.target.value);
-			touchSettings();
-			e.target.closest(".field").querySelector("small").textContent = ap.scale + "%";
-			applyTheme();
-			save();
-		}
+		// While dragging only the label follows: zooming the window under the pointer would move the
+		// slider itself and make the value jump. The size is applied when the slider is released.
+		if (e.target.matches("[data-scale]")) e.target.closest(".field").querySelector("small").textContent = e.target.value + "%";
 	};
 	b.onchange = (e) => {
 		if (e.target.matches("[data-color]")) appearance(b);
+		if (e.target.matches("[data-scale]")) {
+			ap.scale = Number(e.target.value);
+			touchSettings();
+			applyTheme();
+			save();
+		}
 	};
 }
 
@@ -648,6 +651,108 @@ function cli(b) {
 	bindForm(b);
 }
 
+// ───────────────────────── AI agent control (Argon as an MCP server) ─────────────────────────
+const CONTROL_GROUPS = () => [
+	["settings", tt("Aspetto e impostazioni", "Look and settings"), tt("Colori, tema, dimensione, modelli, ambienti, limiti; mostrare pagine nell'app", "Colours, theme, size, models, environments, limits; showing pages in the app")],
+	["agents", tt("Sub-agenti, skill, comandi e memoria", "Sub-agents, skills, commands and memory"), tt("Crearli, modificarli ed eliminarli", "Create, change and delete them")],
+	["connectors", tt("Connettori MCP", "MCP connectors"), tt("Aggiungere, rimuovere, accendere e spegnere server MCP. Un server locale esegue un comando sul tuo computer.", "Add, remove, turn MCP servers on and off. A local server runs a command on your computer.")],
+	["sessions", tt("Sessioni", "Sessions"), tt("Leggere, avviare, scrivere e fermare sessioni; domande a parte (/btw)", "Read, start, message and stop sessions; side questions (/btw)")],
+	["security", tt("Permessi e hook", "Permissions and hooks"), tt("Modalità permessi, regole allow/deny, hook e strumenti. Lascialo spento se non ti serve.", "Permission mode, allow/deny rules, hooks and tools. Leave it off unless you need it.")],
+];
+
+const shq = (x) => (/[\s"]/.test(x) ? `"${x.replace(/"/g, '\\"')}"` : x);
+
+/** Snippets to connect an MCP client to Argon. */
+function controlSnippets(info) {
+	const { command, args } = info.stdio;
+	const http = info.http?.url;
+	const out = {
+		claude: `claude mcp add argon -- ${[command, ...args].map(shq).join(" ")}`,
+		json: JSON.stringify({ mcpServers: { argon: { command, args } } }, null, 2),
+		codex: `[mcp_servers.argon]\ncommand = ${JSON.stringify(command)}\nargs = ${JSON.stringify(args)}`,
+	};
+	if (http) {
+		out.claude += `\n\n# ${tt("oppure via HTTP", "or over HTTP")}\nclaude mcp add --transport http argon ${http} --header "Authorization: Bearer ${info.token}"`;
+		out.http = `URL: ${http}\nHeader: Authorization: Bearer ${info.token}`;
+	}
+	return out;
+}
+
+async function control(b) {
+	const ac = S.settings.agentControl;
+	const info = S.controlInfo;
+	const on = ac.enabled;
+	const snip = S.controlSnip ?? "claude";
+	const snips = info ? controlSnippets(info) : null;
+	const tabsDef = [["claude", "Claude Code"], ["json", tt("JSON (Claude Desktop, Cursor…)", "JSON (Claude Desktop, Cursor…)")], ["codex", "Codex"], ...(snips?.http ? [["http", "HTTP"]] : [])];
+	const cur = snips?.[snip] ? snip : "claude";
+	const groupsOn = Object.fromEntries(CONTROL_GROUPS().map(([g]) => [g, !!ac.allow?.[g]]));
+	b.innerHTML = `<h3>${tt("Controllo da agenti AI", "AI agent control")}</h3>
+	<p class="lead">${tt("Lascia che altri agenti AI (Claude Code, Claude Desktop, Cursor, Codex…) e l'agente di Argon stesso usino Argon tramite il suo server MCP: cambiare l'aspetto, creare sub-agenti, collegare connettori, avviare sessioni e altro. Le modifiche si vedono subito nell'app.", "Let other AI agents (Claude Code, Claude Desktop, Cursor, Codex…) and Argon's own agent use Argon through its MCP server: change the look, create sub-agents, connect connectors, start sessions and more. Changes show up in the app right away.")}</p>
+	<div class="group">
+		${F("agentControl.enabled", tt("Permetti il controllo da agenti AI", "Allow AI agents to control Argon"), tt("Spento di default: finché è spento nessun agente può usare questi strumenti.", "Off by default: while it's off no agent can use these tools."), "bool")}
+		${F("agentControl.builtin", tt("Connettore integrato «Argon»", "Built-in “Argon” connector"), tt("Anche l'agente di Argon riceve questi strumenti (Personalizza → Connettori). Nelle sessioni in modalità Chiedi ogni azione chiede conferma.", "Argon's own agent gets these tools too (Customize → Connectors). In Ask mode every action asks for confirmation."), "bool")}
+	</div>
+	<div class="group ${on ? "" : "dim-group"}"><div class="gh">${tt("Cosa possono fare", "What they can do")}</div>
+		${CONTROL_GROUPS().map(([g, l, h]) => F(`agentControl.allow.${g}`, l, h, "bool")).join("")}
+	</div>
+	<div class="group ${on ? "" : "dim-group"}"><div class="gh">${tt("Collega un agente", "Connect an agent")}</div>
+		${
+			!snips
+				? `<div class="field"><span class="dim">${loader(20, "sm")}</span></div>`
+				: `<div class="field col"><div class="lbl"><b>${tt("Configurazione", "Configuration")}</b><small>${tt("Aggiungi Argon come server MCP nel tuo client. Usa l'app aperta se c'è, altrimenti avvia Argon in background.", "Add Argon as an MCP server in your client. It uses the open app if there is one, otherwise it starts Argon in the background.")}</small></div>
+			<div class="tabs" data-snip-tabs>${tabsDef.map(([id, l]) => `<button class="${id === cur ? "on" : ""}" data-snip="${id}">${l}</button>`).join("")}</div>
+			<div class="snip"><pre>${esc(snips[cur])}</pre><button class="icon-btn" data-copy title="${tt("Copia", "Copy")}">${icon("content_copy")}</button></div></div>`
+		}
+		${F("agentControl.port", tt("Porta HTTP fissa", "Fixed HTTP port"), tt("Facoltativa, per i client che si collegano via URL (es. 47823). 0 = solo il comando qui sopra.", "Optional, for clients that connect by URL (e.g. 47823). 0 = only the command above."), "number")}
+		${
+			info && ac.port > 0
+				? `<div class="field"><div class="lbl"><b>${tt("Stato HTTP", "HTTP status")}</b><small>${
+						!on ? tt("Spento", "Off") : !info.http.managed ? tt("La porta fissa la apre l'app desktop", "The desktop app opens the fixed port") : info.http.error ? esc(info.http.error) : info.http.listening ? tt(`In ascolto su ${esc(info.http.url)}`, `Listening on ${esc(info.http.url)}`) : tt("Avvio…", "Starting…")
+					}</small></div><button class="btn sm" data-regen>${icon("refresh")} ${tt("Nuovo token", "New token")}</button></div>`
+				: ""
+		}
+	</div>
+	<div class="group"><div class="gh">${tt("Strumenti", "Tools")} <span class="dim">${info ? info.tools.filter((x) => groupsOn[x.group]).length + "/" + info.tools.length : ""}</span></div>
+		${
+			info
+				? CONTROL_GROUPS()
+						.map(([g, l]) => {
+							const list = info.tools.filter((x) => x.group === g);
+							return `<div class="tool-grp ${groupsOn[g] ? "" : "off"}"><div class="tg-h">${esc(l)}</div>${list.map((x) => `<div class="tg-row" title="${esc(x.description)}"><code>${esc(x.name)}</code><span>${esc(lang() === "it" ? x.titleIt : x.title)}</span>${x.readOnly ? `<span class="badge">${tt("lettura", "read")}</span>` : ""}</div>`).join("")}</div>`;
+						})
+						.join("")
+				: ""
+		}
+	</div>`;
+	bindForm(b, async () => {
+		S.controlInfo = await api("/agent-control").catch(() => S.controlInfo);
+		if (b.isConnected) control(b);
+	});
+	b.onclick = async (e) => {
+		const t2 = e.target.closest("[data-snip]");
+		if (t2) {
+			S.controlSnip = t2.dataset.snip;
+			for (const x of b.querySelectorAll("[data-snip]")) x.classList.toggle("on", x === t2);
+			$(".snip pre", b).textContent = snips[t2.dataset.snip];
+			return;
+		}
+		if (e.target.closest("[data-copy]")) {
+			await navigator.clipboard.writeText($(".snip pre", b).textContent).catch(() => {});
+			return toast(tt("Copiato", "Copied"));
+		}
+		if (e.target.closest("[data-regen]")) {
+			S.controlInfo = await api("/agent-control", { body: { regenerate: true } });
+			toast(tt("Nuovo token: aggiorna i client collegati via HTTP", "New token: update the clients connected over HTTP"), 4000);
+			control(b);
+		}
+	};
+	if (!info) {
+		S.controlInfo = await api("/agent-control").catch(() => null);
+		if (S.controlInfo && b.isConnected) control(b);
+	}
+}
+
 function advanced(b) {
 	b.innerHTML = `<h3>${tt("Avanzate", "Advanced")}</h3><p class="lead">${tt("Tutte le impostazioni in JSON (~/.argon/settings.json).", "All settings as JSON (~/.argon/settings.json).")}</p>
 	<div class="group"><div class="field col"><textarea class="inp full" rows="28" id="json">${esc(JSON.stringify(S.settings, null, 2))}</textarea>
@@ -706,8 +811,18 @@ async function connectors(b) {
 			})
 			.catch(() => {});
 	const servers = S.settings.mcp.servers;
+	const builtin = st.find((m) => m.builtin);
+	const ac = S.settings.agentControl;
+	const builtinRow = builtin
+		? `<div class="list-item" data-builtin>${icon("smart_toy")}
+			<div class="grow"><b>Argon</b> <span class="badge">${tt("integrato", "built-in")}</span> <span class="badge ${builtin.status === "connected" ? "on" : ""}">${builtin.status === "connected" ? builtin.tools.length + " tools" : tt("spento", "off")}</span>
+			<small>${tt("Strumenti per usare Argon stesso: aspetto, sub-agenti, connettori, sessioni…", "Tools to operate Argon itself: look, sub-agents, connectors, sessions…")}${ac.enabled ? "" : " · " + tt("attiva il controllo da agenti AI nelle impostazioni", "turn on AI agent control in settings")}</small>
+			${builtin.tools.length ? `<details><summary style="cursor:pointer;color:var(--muted);font-size:12px">${tt("strumenti", "tools")}</summary><div style="font-size:12px;color:var(--text-2);margin-top:4px">${builtin.tools.map((x) => `<div><b>${esc(x.name)}</b> <span style="color:var(--muted)">${esc(x.description)}</span></div>`).join("")}</div></details>` : ""}</div>
+			<label class="toggle"><input type="checkbox" data-builtin-en ${builtin.status === "connected" ? "checked" : ""}><i></i></label>
+			<button class="btn sm" data-go-control title="${tt("Impostazioni", "Settings")}">${icon("settings")}</button></div>`
+		: "";
 	b.innerHTML = `<h3>${tt("Connettori (MCP)", "Connectors (MCP)")}</h3><p class="lead">${tt("Collega server Model Context Protocol: i loro strumenti diventano strumenti di Argon (mcp__server__tool).", "Connect Model Context Protocol servers: their tools become Argon tools (mcp__server__tool).")}</p>
-	<div class="group">${st.map((m) => `
+	<div class="group">${builtinRow}${st.filter((m) => !m.builtin).map((m) => `
 		<div class="list-item" data-mcp="${esc(m.name)}">${icon("plug")}
 			<div class="grow"><b>${esc(m.name)}</b> <span class="badge ${m.status === "connected" ? "on" : m.status === "error" ? "err" : ""}">${m.status === "connected" ? m.tools.length + " tools" : esc(m.status)}</span>
 			<small>${esc(servers[m.name]?.url ?? [servers[m.name]?.command, ...(servers[m.name]?.args ?? [])].join(" "))}${m.error ? ` · ${esc(m.error)}` : ""}</small>
@@ -715,10 +830,11 @@ async function connectors(b) {
 			<label class="toggle"><input type="checkbox" data-en ${m.status !== "disabled" ? "checked" : ""}><i></i></label>
 			<button class="btn sm" data-re title="${tt("Riconnetti", "Reconnect")}">${icon("refresh")}</button>
 			<button class="btn sm" data-ed>${icon("edit")}</button>
-			<button class="btn sm danger" data-rm>${icon("trash")}</button></div>`).join("") || `<div class="empty">${tt("Nessun connettore.", "No connectors.")}</div>`}
+			<button class="btn sm danger" data-rm>${icon("trash")}</button></div>`).join("") || (builtin ? "" : `<div class="empty">${tt("Nessun connettore.", "No connectors.")}</div>`)}
 		<div class="list-item"><button class="btn sm pri" data-add>${icon("plus")} ${tt("Aggiungi connettore", "Add connector")}</button></div></div>
 	<div class="group"><div class="gh">${tt("Suggeriti", "Suggested")}</div>${MCP_PRESETS.map((p, i) => `<div class="list-item">${icon("spark")}<div class="grow"><b>${p.name}</b><small>${esc(p.desc())}</small></div><button class="btn sm" data-preset="${i}" ${servers[p.name] ? "disabled" : ""}>${servers[p.name] ? "✓" : t("add")}</button></div>`).join("")}</div>`;
 	b.onclick = async (e) => {
+		if (e.target.closest("[data-go-control]")) return go("/settings/control");
 		const row = e.target.closest("[data-mcp]");
 		const name = row?.dataset.mcp;
 		if (row && e.target.closest("[data-rm]")) {
@@ -743,6 +859,18 @@ async function connectors(b) {
 		}
 	};
 	b.onchange = async (e) => {
+		const be = e.target.closest("[data-builtin-en]");
+		if (be) {
+			// The master switch lives in settings: turning the connector on there is the user's choice.
+			if (!S.settings.agentControl.enabled) {
+				be.checked = false;
+				toast(tt("Prima attiva il controllo da agenti AI", "Turn on AI agent control first"), 3500);
+				return go("/settings/control");
+			}
+			S.settings.agentControl.builtin = be.checked;
+			await saveSettings(S.settings);
+			return setTimeout(() => connectors(b), 600);
+		}
 		const en = e.target.closest("[data-en]");
 		if (!en) return;
 		const name = en.closest("[data-mcp]").dataset.mcp;

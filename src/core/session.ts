@@ -6,6 +6,7 @@ import { loadSettings, saveSettings, type Effort, type PermissionMode, type Sett
 import { resolveApiKey } from "./auth.js";
 import { modelKey, resolveModel } from "./providers.js";
 import { newSessionData, saveSession, loadSession, type SessionData, type TodoItem } from "./sessions.js";
+import { findPrUrl } from "./github.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { applyEffort, resolveEffort, adaptiveThinkingPatch } from "./effort.js";
 import { findAgent, listAgents } from "./agents.js";
@@ -14,6 +15,7 @@ import { dirname } from "node:path";
 import { runHooks } from "./hooks.js";
 import { limitStatus, recordLlmUsage, recordPrompt, type LimitStatus } from "./usage.js";
 import { mcpTools } from "./mcp.js";
+import { controlAgentTools } from "./control.js";
 import { findSkill, listCommands, expandCommand } from "./skills.js";
 import type { ToolContext } from "./tools/util.js";
 import { readTool, writeTool, editTool, lsTool, globTool, grepTool } from "./tools/files.js";
@@ -36,6 +38,9 @@ export type ArgonEvent =
 	| { type: "notice"; level: "info" | "warn" | "error"; text: string }
 	| { type: "background"; processes: BackgroundInfo[] }
 	| { type: "meta"; meta: SessionData["meta"] }
+	| { type: "queue"; queue: QueuedView[]; sent?: QueuedView }
+	| { type: "btw"; btw: SideAnswer }
+	| { type: "btw_dismiss"; id: string }
 	| {
 			type: "subagent";
 			toolCallId: string;
@@ -49,6 +54,41 @@ export type ArgonEvent =
 			model?: string;
 			color?: string;
 	  };
+
+/** A message the user queued while the agent works: it is sent when the run ends. */
+export interface QueuedMessage {
+	id: string;
+	text: string;
+	images: ImageContent[];
+	at: number;
+}
+/** What clients see of a queued message (images are only counted). */
+export interface QueuedView {
+	id: string;
+	text: string;
+	images: number;
+	at: number;
+}
+/** A /btw side question, answered by a read-only sub-agent without touching the main conversation. */
+export interface SideAnswer {
+	id: string;
+	question: string;
+	status: "running" | "done" | "error";
+	text: string;
+	steps: number;
+	tool?: string;
+	error?: string;
+	model?: string;
+	at: number;
+}
+
+const BTW_PROMPT = `
+
+# Side question (/btw)
+The user asked a quick side question while the main agent keeps working. The conversation so far is inside <conversation>; it may stop mid-step.
+- Answer the question directly and concisely, in the user's language. Use Markdown.
+- You may use read-only tools to check facts. You cannot change anything, and you don't continue or plan the main task (ignore the plan-mode note above).
+- Your answer is shown only to the user. It is not added to the main conversation and the main agent never sees it.`;
 
 export interface SessionOptions {
 	cwd: string;
@@ -80,6 +120,15 @@ export class ArgonSession {
 	interactive: boolean;
 	/** Background shell processes started by the agent in this session. */
 	background: BackgroundManager;
+	/** Messages queued with Ctrl+Enter: sent one at a time when a run ends (paused after a stop or an error). */
+	queue: QueuedMessage[] = [];
+	/** Recent /btw side answers (kept in memory only). */
+	btws: SideAnswer[] = [];
+	private btwStop = new Map<string, () => void>();
+	/** The user stopped the last run: don't drain the queue on its own. */
+	private stopped = false;
+	/** prompt() is starting a run (hooks, auto-compaction) but the status isn't "running" yet. */
+	private launching = false;
 
 	get id(): string {
 		return this.data.meta.id;
@@ -102,16 +151,7 @@ export class ArgonSession {
 				tools: [],
 			},
 			convertToLlm: (msgs) => msgs.filter((m: any) => m.role === "user" || m.role === "assistant" || m.role === "toolResult") as Message[],
-			getApiKey: async (provider) => {
-				const custom = this.settings.providers.custom.find((p) => p.id === provider);
-				if (custom?.noAuth) return (await resolveApiKey(provider).catch(() => undefined)) ?? "local";
-				try {
-					return await resolveApiKey(provider);
-				} catch (e) {
-					this.emit({ type: "notice", level: "error", text: `Credentials for ${provider}: ${(e as Error).message}` });
-					return undefined;
-				}
-			},
+			getApiKey: (provider) => this.apiKey(provider),
 			beforeToolCall: (c) => this.gate(c.toolCall.name, c.args),
 			afterToolCall: async (c) => {
 				if (this.settings.hooks.some((h) => h.event === "postToolUse")) {
@@ -158,6 +198,17 @@ export class ArgonSession {
 
 	private L(it: string, en: string): string {
 		return this.settings.general.language === "it" ? it : en;
+	}
+
+	private async apiKey(provider: string): Promise<string | undefined> {
+		const custom = this.settings.providers.custom.find((p) => p.id === provider);
+		if (custom?.noAuth) return (await resolveApiKey(provider).catch(() => undefined)) ?? "local";
+		try {
+			return await resolveApiKey(provider);
+		} catch (e) {
+			this.emit({ type: "notice", level: "error", text: `Credentials for ${provider}: ${(e as Error).message}` });
+			return undefined;
+		}
 	}
 
 	get cwd(): string {
@@ -232,6 +283,8 @@ export class ArgonSession {
 			skillTool(ctx),
 			...(forSubagent ? [] : [taskTool(ctx), askUserTool(ctx)]),
 			...mcpTools(),
+			// The built-in "Argon" connector: tools to operate Argon itself (only with AI agent control on).
+			...(forSubagent ? [] : controlAgentTools()),
 		];
 		tools = tools.filter((t) => !s.tools.disabled.includes(t.name));
 		if (readOnly) tools = tools.filter((t) => READ_ONLY_TOOLS.has(t.name) || t.name === "memory");
@@ -342,10 +395,10 @@ export class ArgonSession {
 	}
 
 	async prompt(input: string, images: ImageContent[] = []): Promise<void> {
-		if (this.status !== "idle") {
+		if (this.status !== "idle" || this.launching) {
 			// Steering: deliver the message after the current turn.
 			this.agent.steer({ role: "user", content: images.length ? [{ type: "text", text: input }, ...images] : input, timestamp: Date.now() });
-			this.emit({ type: "notice", level: "info", text: this.L("Messaggio in coda: lo leggerà dopo il passo in corso.", "Message queued: it will be read after the current step.") });
+			this.emit({ type: "notice", level: "info", text: this.L("Messaggio inviato: lo leggerà dopo il passo in corso.", "Message sent: it will be read after the current step.") });
 			return;
 		}
 		const limits = limitStatus();
@@ -354,6 +407,21 @@ export class ArgonSession {
 			this.emit({ type: "notice", level: "error", text: limits.blockedReason });
 			return;
 		}
+		this.launching = true;
+		this.stopped = false;
+		let ok = false;
+		try {
+			ok = await this.run(input, images, limits);
+		} finally {
+			this.launching = false;
+		}
+		// The run ended on its own: send the next queued message. A stop or an error pauses the queue.
+		const last: any = [...this.agent.state.messages].reverse().find((m: any) => m.role === "assistant");
+		// (Checked again when the timer fires: a later run may have been stopped by then.)
+		if (ok && !this.stopped && !this.limitStopped && last?.stopReason !== "error") setTimeout(() => !this.stopped && this.drain(), 0);
+	}
+
+	private async run(input: string, images: ImageContent[], limits: LimitStatus): Promise<boolean> {
 		if (limits.warning) {
 			const w = limits.fiveHour.enabled && limits.fiveHour.percent >= limits.warnAt ? "5h" : "weekly";
 			this.emit({ type: "notice", level: "warn", text: this.L(`Attenzione: limite ${w === "5h" ? "delle 5 ore" : "settimanale"} al ${Math.round(w === "5h" ? limits.fiveHour.percent : limits.weekly.percent)}%.`, `Usage warning: ${w} limit at ${Math.round(w === "5h" ? limits.fiveHour.percent : limits.weekly.percent)}%.`) });
@@ -374,8 +442,10 @@ export class ArgonSession {
 		this.setStatus("running");
 		try {
 			await this.agent.prompt(input, images);
+			return true;
 		} catch (e) {
 			this.emit({ type: "notice", level: "error", text: (e as Error).message });
+			return false;
 		} finally {
 			this.setStatus("idle");
 			this.persist();
@@ -385,11 +455,180 @@ export class ArgonSession {
 	}
 
 	abort(): void {
+		if (this.status !== "idle" || this.launching) this.stopped = true;
 		this.agent.abort();
 		for (const r of this.approvals.values()) r("deny");
 	}
 
+	// ───────────────────────── queue (Ctrl+Enter) ─────────────────────────
+
+	private queueView(m: QueuedMessage): QueuedView {
+		return { id: m.id, text: m.text, images: m.images.length, at: m.at };
+	}
+
+	get queued(): QueuedView[] {
+		return this.queue.map((m) => this.queueView(m));
+	}
+
+	private emitQueue(sent?: QueuedMessage): void {
+		this.emit({ type: "queue", queue: this.queued, sent: sent && this.queueView(sent) });
+	}
+
+	/** Queue a message for when the agent has finished. With nothing running it starts (or resumes) the queue. */
+	enqueue(text: string, images: ImageContent[] = []): QueuedView {
+		const m: QueuedMessage = { id: randomUUID().slice(0, 8), text, images, at: Date.now() };
+		this.queue.push(m);
+		this.emitQueue();
+		this.drain();
+		return this.queueView(m);
+	}
+
+	/** Remove a queued message (returns it with its images, e.g. to put it back in the composer). */
+	unqueue(id: string): QueuedMessage | undefined {
+		const m = this.queue.find((x) => x.id === id);
+		if (!m) return undefined;
+		this.queue = this.queue.filter((x) => x.id !== id);
+		this.emitQueue();
+		return m;
+	}
+
+	/** Send one queued message right away: steering if a run is going, a new run otherwise. */
+	sendQueued(id: string): void {
+		const m = this.queue.find((x) => x.id === id);
+		if (!m) return;
+		this.queue = this.queue.filter((x) => x.id !== id);
+		this.emitQueue(m);
+		void this.prompt(m.text, m.images);
+	}
+
+	private drain(): void {
+		if (this.status !== "idle" || this.launching || !this.queue.length) return;
+		const m = this.queue.shift()!;
+		this.emitQueue(m);
+		void this.prompt(m.text, m.images);
+	}
+
+	// ───────────────────────── /btw side questions ─────────────────────────
+
+	/** The conversation as plain text (for compaction and side questions), newest part kept. */
+	private transcript(max: number, withStreaming = false): string {
+		const msgs = [...(this.agent.state.messages as any[])];
+		const live: any = withStreaming ? this.agent.state.streamingMessage : undefined;
+		if (live?.role === "assistant" && live.content?.length) msgs.push(live);
+		return msgs
+			.map((m) => {
+				if (m.role === "user") return `USER: ${typeof m.content === "string" ? m.content : m.content.map((c: any) => c.text ?? "[image]").join(" ")}`;
+				if (m.role === "assistant")
+					return `ASSISTANT: ${(m.content ?? []).map((c: any) => (c.type === "text" ? c.text : c.type === "toolCall" ? `[tool ${c.name} ${JSON.stringify(c.arguments ?? {}).slice(0, 300)}]` : "")).join(" ")}`;
+				if (m.role === "toolResult") return `TOOL RESULT (${m.toolName}): ${m.content.map((c: any) => c.text ?? "").join(" ").slice(0, 800)}`;
+				return "";
+			})
+			.join("\n")
+			.slice(-max);
+	}
+
+	/** Answer a side question with a read-only sub-agent while the main agent keeps working. */
+	btw(question: string): SideAnswer {
+		const b: SideAnswer = { id: randomUUID().slice(0, 8), question, status: "running", text: "", steps: 0, at: Date.now(), model: modelKey(this.model) };
+		this.btws = [...this.btws.slice(-4), b];
+		this.emit({ type: "btw", btw: { ...b } });
+		void this.runBtw(b);
+		return b;
+	}
+
+	dismissBtw(id: string): void {
+		this.btwStop.get(id)?.();
+		this.btws = this.btws.filter((b) => b.id !== id);
+		this.emit({ type: "btw_dismiss", id });
+	}
+
+	private async runBtw(b: SideAnswer): Promise<void> {
+		const st = this.settings;
+		const model = this.model;
+		const applied = applyEffort(model, "low");
+		// Read-only, and nothing that touches the main session (its todo list, memory, sub-agents, questions).
+		const tools = this.buildTools(true, true).filter((t) => t.name !== "todo" && t.name !== "memory");
+		const sub = new Agent({
+			initialState: {
+				model: applied.model,
+				thinkingLevel: applied.level,
+				tools,
+				systemPrompt: buildSystemPrompt({ cwd: this.cwd, settings: st, mode: "plan", modelName: model.name, toolNames: tools.map((t) => t.name) }).concat(BTW_PROMPT),
+			},
+			getApiKey: (p) => this.apiKey(p),
+			beforeToolCall: (c) => this.gate(c.toolCall.name, c.args),
+			onPayload: adaptiveThinkingPatch(applied.model, applied.effort),
+			sessionId: `${this.id}-btw`,
+		});
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const push = (now = false) => {
+			if (now) {
+				clearTimeout(timer);
+				timer = undefined;
+				if (this.btws.includes(b)) this.emit({ type: "btw", btw: { ...b } });
+				return;
+			}
+			timer ??= setTimeout(() => push(true), 60);
+		};
+		let current = "";
+		sub.subscribe((e: any) => {
+			if (e.type === "message_start" && e.message?.role === "assistant") current = "";
+			if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") {
+				current += e.assistantMessageEvent.delta;
+				b.text = current;
+				push();
+			}
+			if (e.type === "tool_execution_start") {
+				b.steps++;
+				b.tool = describeCall(e.toolName, e.args).slice(0, 140);
+				push();
+				if (b.steps >= st.agents.maxSteps) sub.abort();
+			}
+			if (e.type === "message_end" && e.message?.role === "assistant") {
+				const m: any = e.message;
+				if (m.usage) recordLlmUsage(this.id, m.provider, m.model, m.usage, "btw");
+				if (m.stopReason === "error" && m.errorMessage) b.error = m.errorMessage;
+			}
+		});
+		this.btwStop.set(b.id, () => sub.abort());
+		const ask = `<conversation>\n${this.data.summary ? `Earlier summary:\n${this.data.summary}\n\n` : ""}${this.transcript(60_000, true) || "(empty)"}\n</conversation>\n\nSide question from the user: ${b.question}`;
+		try {
+			await sub.prompt(ask);
+			const last: any = [...sub.state.messages].reverse().find((m: any) => m.role === "assistant");
+			const text = last?.content?.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n").trim();
+			if (text) b.text = text;
+			b.status = b.error && !text ? "error" : "done";
+		} catch (e) {
+			b.error = (e as Error).message;
+			b.status = "error";
+		} finally {
+			this.btwStop.delete(b.id);
+			b.tool = undefined;
+			push(true);
+		}
+	}
+
+	/** Shell commands in flight, to spot pull requests the agent opens with `gh pr create`. */
+	private shellCalls = new Map<string, string>();
+
+	private notePullRequest(command: string, result: any): void {
+		const text = (result?.content ?? []).map((c: any) => c.text ?? "").join("\n");
+		const pr = findPrUrl(text);
+		if (!pr) return;
+		const prs = (this.data.meta.prs ??= []);
+		if (prs.some((p) => p.url === pr.url)) return;
+		const title = command.match(/--title\s+(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+))/);
+		prs.push({ number: pr.number, url: pr.url, title: (title?.[1] ?? title?.[2] ?? title?.[3] ?? "").replace(/\\"/g, '"'), branch: "", createdAt: Date.now() });
+		this.persist();
+	}
+
 	private onAgentEvent(e: AgentEvent): void {
+		if (e.type === "tool_execution_start" && e.toolName === "bash") this.shellCalls.set(e.toolCallId, String(e.args?.command ?? ""));
+		if (e.type === "tool_execution_end" && e.toolName === "bash") {
+			const command = this.shellCalls.get(e.toolCallId) ?? "";
+			this.shellCalls.delete(e.toolCallId);
+			if (!e.isError && /\bgh\s+pr\s+create\b/.test(command)) this.notePullRequest(command, e.result);
+		}
 		if (e.type === "message_end" && (e.message as any).role === "assistant") {
 			const m: any = e.message;
 			if (m.usage) recordLlmUsage(this.id, m.provider, m.model, m.usage);
@@ -467,16 +706,7 @@ export class ArgonSession {
 		if (!msgs.length) return;
 		this.setStatus("compacting");
 		try {
-			const transcript = msgs
-				.map((m) => {
-					if (m.role === "user") return `USER: ${typeof m.content === "string" ? m.content : m.content.map((c: any) => c.text ?? "[image]").join(" ")}`;
-					if (m.role === "assistant")
-						return `ASSISTANT: ${m.content.map((c: any) => (c.type === "text" ? c.text : c.type === "toolCall" ? `[tool ${c.name} ${JSON.stringify(c.arguments).slice(0, 300)}]` : "")).join(" ")}`;
-					if (m.role === "toolResult") return `TOOL RESULT (${m.toolName}): ${m.content.map((c: any) => c.text ?? "").join(" ").slice(0, 800)}`;
-					return "";
-				})
-				.join("\n")
-				.slice(-400_000);
+			const transcript = this.transcript(400_000);
 			const res = await completeSimple(
 				this.model,
 				{

@@ -1,6 +1,6 @@
 {
   "name": "argon-agent",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "Argon (Ar, 18) — open-source AI agent: Rust CLI, Tauri desktop app, multi-provider core with MCP, skills and usage limits",
   "main": "dist/core/index.js",
   "scripts": {

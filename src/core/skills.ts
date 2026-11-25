@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { homedir } from "node:os";
 import { paths, projectDir } from "./paths.js";
@@ -104,4 +104,26 @@ export function listCommands(cwd: string, s: Settings): SlashCommand[] {
 export function expandCommand(cmd: SlashCommand, args: string): string {
 	const parts = args.split(/\s+/).filter(Boolean);
 	return cmd.body.replace(/\$ARGUMENTS/g, args).replace(/\$(\d)/g, (_m, i) => parts[Number(i) - 1] ?? "");
+}
+
+const slugName = (n: string) => String(n ?? "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "");
+
+/** Create or replace a global skill (~/.argon/skills/<name>/SKILL.md). Returns its folder. */
+export function saveSkill(def: { name: string; description: string; body: string }): string {
+	const name = slugName(def.name);
+	if (!name) throw new Error("name required");
+	const dir = join(paths.skills, name);
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${String(def.description ?? "").replace(/\n/g, " ")}\n---\n\n${def.body ?? ""}\n`);
+	return dir;
+}
+
+/** Create or replace a global slash command (~/.argon/commands/<name>.md). Returns its file. */
+export function saveCommand(def: { name: string; description: string; body: string }): string {
+	const name = slugName(def.name);
+	if (!name) throw new Error("name required");
+	mkdirSync(paths.commands, { recursive: true });
+	const file = join(paths.commands, `${name}.md`);
+	writeFileSync(file, `---\ndescription: ${String(def.description ?? "").replace(/\n/g, " ")}\n---\n\n${def.body ?? ""}\n`);
+	return file;
 }

@@ -139,6 +139,8 @@ kbd { font: 500 11px var(--font); color: var(--on-surface-variant); }
 .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr) auto; height: calc(100vh / var(--ui-scale, 1)); transition: grid-template-columns var(--med) var(--emph); }
 .layout.side-collapsed { grid-template-columns: 0 minmax(0, 1fr) auto; }
 .layout.side-collapsed .sidebar { visibility: hidden; }
+.side-btns { display: contents; }
+.layout:not(.side-collapsed) .topbar .side-btns { display: none; }
 main { display: flex; flex-direction: column; min-width: 0; height: calc(100vh / var(--ui-scale, 1)); }
 .pane {
 	flex: 1; min-height: 0; display: flex; flex-direction: column;
@@ -287,7 +289,7 @@ main { display: flex; flex-direction: column; min-width: 0; height: calc(100vh /
 
 /* ───────── composer ───────── */
 .composer-wrap { width: min(780px, 100%); position: relative; }
-.session-composer { padding: 6px 28px 18px; flex: none; display: flex; justify-content: center; }
+.session-composer { padding: 6px 28px 18px; /* docks above it use the same 28px sides */ flex: none; display: flex; justify-content: center; }
 .composer {
 	--cr: var(--r-xl);
 	background: var(--surface-high); border-radius: var(--cr); padding: 14px 10px 10px 18px;
@@ -297,6 +299,24 @@ main { display: flex; flex-direction: column; min-width: 0; height: calc(100vh /
 .composer:focus-within { --cr: var(--r-l); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--primary) 55%, transparent); }
 .composer textarea { width: 100%; resize: none; border: 0; outline: 0; background: transparent; min-height: 24px; max-height: 300px; font-size: 15px; line-height: 24px; padding: 0 6px 0 0; }
 .composer textarea::placeholder { color: var(--on-surface-variant); }
+/* Mirror under the textarea: shows a recognized /command in the palette colours and list markers in primary.
+   It only appears (and the textarea's own text turns transparent) when there is something to highlight. */
+.ta-wrap { position: relative; }
+.ta-wrap textarea { position: relative; z-index: 1; }
+.ta-mirror {
+	position: absolute; left: 0; top: 0; z-index: 0; display: none; pointer-events: none; overflow: hidden;
+	white-space: pre-wrap; overflow-wrap: break-word; font-size: 15px; line-height: 24px; padding: 0 6px 0 0; color: var(--on-surface);
+	letter-spacing: normal; word-spacing: normal; /* the browser resets these on textareas: the glyphs must line up */
+}
+.ta-wrap.hl .ta-mirror { display: block; }
+.ta-wrap.hl textarea { color: transparent; caret-color: var(--on-surface); }
+.ta-mirror .cmd { border-radius: 6px; background: color-mix(in srgb, var(--primary) 16%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 16%, transparent); }
+.ta-mirror .cmd > span { background-image: var(--grad-text); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.ta-mirror .li { position: relative; color: transparent; }
+/* The bullet is drawn over the (transparent) dash, slightly into the indent before it and larger, so it
+   reads like a document's bullet while the text keeps its exact position. */
+.ta-mirror .li::before { content: attr(data-b); position: absolute; left: 50%; top: 0; transform: translateX(calc(-50% - 3px)); font-size: 20px; color: var(--on-surface); }
+.ta-mirror .li.i0::before { transform: translateX(-50%); }
 .composer .row { display: flex; align-items: center; gap: 4px; margin-top: 8px; margin-left: -8px; }
 .send {
 	/* sits in the composer's bottom-right corner: concentric radius = composer radius − 10px padding */
@@ -460,6 +480,12 @@ button.chip:hover { border-radius: var(--r-full); }
 	white-space: pre-wrap; word-wrap: break-word; font-size: 15px; line-height: 23px;
 }
 @keyframes bubble-in { from { opacity: 0; transform: translateY(8px) scale(0.97); } }
+.msg-user .bubble .ulist { margin: 0; padding-left: 22px; }
+.msg-user .bubble .ulist li { padding-left: 2px; }
+.msg-user .bubble .ulist li.d1 { margin-left: 18px; list-style-type: circle; }
+.msg-user .bubble .ulist li.d2 { margin-left: 36px; list-style-type: square; }
+.msg-user .bubble .ulist li.d3 { margin-left: 54px; list-style-type: square; }
+.msg-user .bubble .ut + .ulist, .msg-user .bubble .ulist + .ut { margin-top: 4px; }
 .msg-user .imgs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; justify-content: flex-end; }
 .msg-user .imgs img { max-width: 180px; max-height: 140px; border-radius: var(--r-m); }
 .md { font-size: 15px; line-height: 25px; word-wrap: break-word; margin: 14px 0; }
@@ -553,8 +579,28 @@ button.chip:hover { border-radius: var(--r-full); }
 #elapsed { font-variant-numeric: tabular-nums; font-size: 12.5px; }
 .summary-box { font-size: 13px; color: var(--on-surface-variant); background: var(--surface-container); border-radius: var(--r-l); padding: 10px 16px; margin: 16px 0; display: flex; gap: 8px; align-items: center; }
 
-.todo-dock { width: min(780px, 100%); margin: 0 auto 8px; background: var(--surface-container); border-radius: var(--r-l); padding: 12px 16px; font-size: 13.5px; animation: bubble-in var(--med) var(--spring); }
+.todo-dock { width: min(780px, calc(100% - 56px)); margin: 0 auto 8px; background: var(--surface-container); border-radius: var(--r-l); padding: 12px 16px; font-size: 13.5px; animation: bubble-in var(--med) var(--spring); }
 .todo-dock .h { display: flex; justify-content: space-between; color: var(--on-surface-variant); font: 500 12px var(--font); letter-spacing: 0.4px; margin-bottom: 4px; }
+/* Queued messages (Ctrl+Enter) and /btw answers sit above the composer like the task list. */
+.queue-dock, .btw-card { width: min(780px, calc(100% - 56px)); margin: 0 auto 8px; background: var(--surface-container); border-radius: var(--r-l); padding: 10px 8px 8px 16px; font-size: 13.5px; animation: bubble-in var(--med) var(--spring); }
+.queue-dock.calm { animation: none; }
+.queue-dock .h, .btw-card .h { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--on-surface-variant); font: 500 12px var(--font); letter-spacing: 0.4px; }
+.queue-dock .h { padding-right: 8px; margin-bottom: 2px; }
+.qrow { display: flex; align-items: center; gap: 6px; min-height: 36px; }
+.qrow .qn { display: grid; place-items: center; color: var(--primary); }
+.qrow .qn .ms { font-size: 18px; }
+.qrow .qt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: 4px; }
+.qrow .qi { display: inline-flex; align-items: center; gap: 2px; color: var(--on-surface-variant); font-size: 12px; }
+.qrow .qi .ms { font-size: 16px; }
+.qrow .icon-btn, .btw-card .h .icon-btn { width: 32px; height: 32px; flex: none; }
+.qrow .icon-btn .ms, .btw-card .h .icon-btn .ms { font-size: 18px; }
+.btw-card .h { margin: -4px 0 4px; }
+.btw-card .btw-tag { flex: none; font: 600 12px var(--mono); background-image: var(--grad-text); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.btw-card .q { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--on-surface); font: 500 13px var(--font); letter-spacing: 0; }
+.btw-card .body { max-height: 260px; overflow-y: auto; padding-right: 8px; }
+.btw-card .md { margin: 0; font-size: 14px; line-height: 22px; }
+.btw-card .notice { margin: 0; }
+.btw-wait { display: flex; align-items: center; gap: 10px; min-height: 28px; color: var(--on-surface-variant); }
 .todo { display: flex; gap: 10px; align-items: center; padding: 3px 0; }
 .todo.done { color: var(--on-surface-variant); text-decoration: line-through; text-decoration-color: var(--outline); }
 .todo.cur { font-weight: 600; }
@@ -682,9 +728,12 @@ input, textarea, [contenteditable="true"] { -webkit-user-select: text; user-sele
 .desktop [data-c="mic"] { display: none; }
 
 @media (max-width: 900px) {
-	.layout { grid-template-columns: 0 minmax(0, 1fr); }
+	/* The sidebar (and the right panel) float over the page here (position: fixed), so they leave the
+	   grid: one column for the page. With a 0px sidebar column the page landed in it and vanished. */
+	.layout, .layout.side-collapsed { grid-template-columns: minmax(0, 1fr); }
 	.sidebar { visibility: hidden; position: fixed; z-index: 40; width: 280px; height: 100vh; background: var(--bg); }
-	.layout.side-open .sidebar { visibility: visible; }
+	.layout.side-open .sidebar { visibility: visible; box-shadow: var(--shadow); }
+	.layout .topbar .side-btns { display: contents; }
 	.pane { margin-left: 8px; }
 	.rightpanel.show { position: fixed; right: 0; top: 0; bottom: 0; z-index: 35; box-shadow: var(--shadow); }
 	.page { grid-template-columns: 1fr; }

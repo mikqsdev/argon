@@ -19,15 +19,40 @@ const extra = Array.from({ length: Math.max(0, Number(process.env.ARGON_FAUX_MOD
 });
 const fauxModels = [{ id: "demo-model", name: "Demo Model", reasoning: true, contextWindow: 200000, cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } }, ...extra];
 const faux = pi.registerFauxProvider({ provider: "demo", tokensPerSecond: 400, models: fauxModels });
-const respond = (ctx) => {
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const respond = async (ctx) => {
+	// /btw side question: one read-only step, then a short answer quoting the conversation.
+	if ((ctx.systemPrompt || "").includes("# Side question (/btw)")) {
+		if (!ctx.messages.some((m) => m.role === "toolResult")) {
+			await wait(600);
+			return pi.fauxAssistantMessage([pi.fauxToolCall("glob", { pattern: "src/**/*.ts" })], { stopReason: "toolUse" });
+		}
+		const c0 = ctx.messages[0]?.content;
+		const q = (typeof c0 === "string" ? c0 : (c0 ?? []).map((c) => c.text ?? "").join("")).match(/Side question from the user: ([\s\S]*)$/)?.[1] ?? "";
+		return pi.fauxAssistantMessage(pi.fauxText(`Short answer to *${q.trim()}*: the main agent is still working on your request.\n\n- It has not changed any file yet\n- The core lives in \`src/core\``));
+	}
 	if ((ctx.systemPrompt || "").includes("# Sub-agent:")) {
 		const n = ctx.messages.filter((m) => m.role === "toolResult").length;
 		if (n === 0) return pi.fauxAssistantMessage([pi.fauxToolCall("glob", { pattern: "src/**/*.ts" })], { stopReason: "toolUse" });
+		if (n === 1) return pi.fauxAssistantMessage([pi.fauxToolCall("grep", { pattern: "export class", path: "src/core" })], { stopReason: "toolUse" });
+		if (n === 2) return pi.fauxAssistantMessage([pi.fauxToolCall("read", { path: "src/core/session.ts", limit: 40 })], { stopReason: "toolUse" });
 		return pi.fauxAssistantMessage(pi.fauxText("Report: core in src/core, CLI in src/cli."));
 	}
-	const done = ctx.messages.filter((m) => m.role === "toolResult").length;
+	// Tool results of this turn only (after the last user message), so each request plays out on its own.
+	const done = ctx.messages.slice(ctx.messages.map((m) => m.role).lastIndexOf("user") + 1).filter((m) => m.role === "toolResult").length;
 	const last = ctx.messages.filter((m) => m.role === "user").at(-1);
 	const text = typeof last?.content === "string" ? last.content : (last?.content ?? []).map((c) => c.text ?? "").join("");
+	// "background": starts two background tasks (a long one and a quick one) for the right panel.
+	if (/background/i.test(text) && !done)
+		return pi.fauxAssistantMessage(
+			[
+				pi.fauxToolCall("bash", { command: "node -e \"setTimeout(() => {}, 600000)\"", description: "Dev server (fake)", background: true }),
+				pi.fauxToolCall("bash", { command: "node -e \"console.log('built')\"", description: "Build once", background: true }),
+			],
+			{ stopReason: "toolUse" },
+		);
+	// "slow": keeps the agent busy for a while (to try queued messages and /btw).
+	if (/slow/i.test(text)) await wait(Number(process.env.ARGON_FAUX_SLOW ?? 6000));
 	if (/write/i.test(text) && !done) return pi.fauxAssistantMessage([pi.fauxToolCall("write", { path: "../outside-faux.txt", content: "x" })], { stopReason: "toolUse" });
 	if (/sub-agent/i.test(text) && !done)
 		return pi.fauxAssistantMessage([pi.fauxThinking("Map the code first."), pi.fauxText("I'll map the project with a sub-agent."), pi.fauxToolCall("task", { agent: "explore", description: "Map the code", prompt: "Map src/" }), pi.fauxToolCall("ls", { path: "." })], { stopReason: "toolUse" });

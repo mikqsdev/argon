@@ -41,6 +41,7 @@ async function boot() {
 		if (ui.sidebar === false) S.sidebar = false;
 		if (ui.rightPanel === false) S.rightPanel = false;
 		if (ui.newOpts) Object.assign(S.newOpts, ui.newOpts);
+		if (ui.collapsed) S.collapsed = ui.collapsed;
 		const saved = ui.envId !== undefined ? ui.envId : (ui.newOpts?.envId ?? ui.sideEnv ?? null);
 		S.envId = S.environments.some((e) => e.id === saved) ? saved : null;
 		delete S.newOpts.envId;
@@ -50,7 +51,13 @@ async function boot() {
 	// Moving between sections of Settings / Customize updates the page in place (the menu stays,
 	// only the section content comes in); any other navigation uses the page transition.
 	let lastTop = location.hash.replace(/^#\/?/, "").split("/")[0];
+	// A floating sidebar closes on navigation and on a click outside it.
+	document.addEventListener("mousedown", (e) => {
+		const l = $("#layout");
+		if (l?.classList.contains("side-open") && !e.target.closest("#sidebar, [data-act=toggle]")) l.classList.remove("side-open");
+	});
 	window.addEventListener("hashchange", () => {
+		$("#layout")?.classList.remove("side-open");
 		const top = location.hash.replace(/^#\/?/, "").split("/")[0];
 		const inPage = top === lastTop && (top === "settings" || top === "customize");
 		lastTop = top;
@@ -88,7 +95,7 @@ export async function reloadBoot() {
 
 function saveUi() {
 	try {
-		localStorage.setItem("argon-ui", JSON.stringify({ sidebar: S.sidebar, rightPanel: S.rightPanel, envId: S.envId, newOpts: S.newOpts }));
+		localStorage.setItem("argon-ui", JSON.stringify({ sidebar: S.sidebar, rightPanel: S.rightPanel, envId: S.envId, newOpts: S.newOpts, collapsed: S.collapsed }));
 	} catch {}
 }
 
@@ -221,12 +228,17 @@ function globalKeys(e) {
 		e.preventDefault();
 		toggleSidebar();
 	}
-	if (e.key === "Escape" && S.cur?.status === "running" && !document.querySelector(".modal-bg")) {
+	// Esc stops the agent, unless it just closed a menu (those handlers call preventDefault).
+	if (e.key === "Escape" && !e.defaultPrevented && S.cur?.status === "running" && !document.querySelector(".modal-bg")) {
 		api(`/sessions/${S.cur.meta.id}/abort`, { body: {} });
 	}
 }
 
+/** Narrow window: the sidebar floats over the page instead of taking a column (see style.css). */
+const narrow = () => matchMedia("(max-width: 900px)").matches;
+
 function toggleSidebar() {
+	if (narrow()) return void $("#layout").classList.toggle("side-open");
 	S.sidebar = !S.sidebar;
 	$("#layout").classList.toggle("side-collapsed", !S.sidebar);
 	saveUi();
@@ -240,10 +252,10 @@ export function renderSidebar() {
 	const list = S.sessions.filter((s) => envOf(s) === S.envId);
 	const startToday = new Date().setHours(0, 0, 0, 0);
 	const groups = [
-		[t("pinned"), list.filter((s) => s.pinned)],
-		[t("today"), list.filter((s) => !s.pinned && s.updatedAt >= startToday)],
-		[t("earlier"), list.filter((s) => !s.pinned && s.updatedAt < startToday)],
-	].filter(([, l]) => l.length);
+		["pinned", t("pinned"), list.filter((s) => s.pinned)],
+		["today", t("today"), list.filter((s) => !s.pinned && s.updatedAt >= startToday)],
+		["earlier", t("earlier"), list.filter((s) => !s.pinned && s.updatedAt < startToday)],
+	].filter(([, , l]) => l.length);
 	const name = S.settings.general.userName || "Argon";
 	// The markup does not depend on the current page: selection is applied in place afterwards, so
 	// navigating never rebuilds the sidebar (no flashing highlights, no replayed animations).
@@ -261,7 +273,7 @@ export function renderSidebar() {
 		</nav>
 		<div class="side-section">${envCardHtml()}</div>
 		<div class="sessions">
-			${groups.length ? groups.map(([g, l]) => `<div class="s-group">${g}</div>${l.map(sessionItem).join("")}`).join("") : `<div class="empty">${icon("chat_bubble")}<br>${currentEnv() ? tt(`Nessuna sessione in ${esc(currentEnv().name)}`, `No sessions in ${esc(currentEnv().name)}`) : t("noSessions")}</div>`}
+			${groups.length ? groups.map(([k, g, l]) => `<div class="s-grp" data-grp="${k}"><button class="s-group" data-grp-toggle="${k}"><span>${g}</span>${icon("down")}</button><div class="s-grp-body"><div class="s-grp-in">${l.map(sessionItem).join("")}</div></div></div>`).join("") : `<div class="empty">${icon("chat_bubble")}<br>${currentEnv() ? tt(`Nessuna sessione in ${esc(currentEnv().name)}`, `No sessions in ${esc(currentEnv().name)}`) : t("noSessions")}</div>`}
 		</div>
 		<div class="side-bottom">
 			<button class="user-chip" data-act="user"><span class="avatar">${esc(name[0].toUpperCase())}</span><span class="who"><span class="n">${esc(name)}</span><span class="p">Argon ${esc(S.boot.version)}</span></span></button>
@@ -276,6 +288,7 @@ export function renderSidebar() {
 		if (list_) list_.scrollTop = scroll;
 	}
 	syncSidebarSel(side, fresh);
+	for (const g of side.querySelectorAll(".s-grp")) g.classList.toggle("collapsed", !!S.collapsed?.[g.dataset.grp]);
 	const sig = S.envId + "|" + list.map((x) => x.id).join(",");
 	if (sig !== S._sideSig) {
 		S._sideSig = sig;
@@ -286,6 +299,13 @@ export function renderSidebar() {
 		// the page already open (selected item, or the same address): nothing to re-render
 		if (g && (g.classList.contains("sel") || location.hash === "#" + g.dataset.go)) return;
 		if (g) return go(g.dataset.go);
+		const fold = e.target.closest("[data-grp-toggle]");
+		if (fold) {
+			const k = fold.dataset.grpToggle;
+			(S.collapsed ??= {})[k] = !S.collapsed[k];
+			fold.closest(".s-grp").classList.toggle("collapsed", S.collapsed[k]);
+			return saveUi();
+		}
 		const s = e.target.closest("[data-sid]");
 		if (s && e.target.closest(".more")) return sessionMenu(e.target.closest(".more"), s.dataset.sid);
 		// The session already on screen: nothing to do (re-rendering would replay its animations).
@@ -314,7 +334,10 @@ const sTitle = (x) => (x === "New session" ? t("newSession") : x);
 
 function sessionItem(s) {
 	const status = S.waiting.has(s.id) ? `<span class="dot-wait"></span>` : S.running.has(s.id) ? loader(16, "sm") : "";
-	return `<div class="s-item" data-sid="${s.id}" title="${esc(s.title)}">${status}<span class="t">${esc(sTitle(s.title))}</span>${s.pinned ? `<span class="pin">${icon("pin")}</span>` : ""}<button class="icon-btn more" style="width:22px;height:22px">${icon("more")}</button></div>`;
+	const pr = sessionPrsOf(s)[0];
+	const k = pr && prKind(pr);
+	const badge = pr ? `<span class="s-pr ${k}" title="PR #${pr.number} · ${esc(prStateLabel(k))}${pr.title ? " · " + esc(pr.title) : ""}">${gitIcon(k, 14)}${pr.number}</span>` : "";
+	return `<div class="s-item" data-sid="${s.id}" title="${esc(s.title)}">${status}<span class="t">${esc(sTitle(s.title))}</span>${s.pinned ? `<span class="pin">${icon("pin")}</span>` : ""}${badge}<button class="icon-btn more" style="width:22px;height:22px">${icon("more")}</button></div>`;
 }
 
 // ───────────────────────── environments (single source of truth) ─────────────────────────
@@ -541,7 +564,8 @@ const refreshSessionsSoon = debounce(refreshSessions, 300);
 // ───────────────────────── top bar ─────────────────────────
 function renderTopbar() {
 	const bar = $("#topbar");
-	const left = S.sidebar ? "" : `<button class="icon-btn" data-act="toggle">${icon("panel")}</button><button class="icon-btn" data-go="/">${icon("plus")}</button>`;
+	// Shown when the sidebar is closed, and always in a narrow window (where it floats).
+	const left = `<span class="side-btns"><button class="icon-btn" data-act="toggle">${icon("panel")}</button><button class="icon-btn" data-go="/">${icon("plus")}</button></span>`;
 	if (S.cur) {
 		bar.className = "topbar bordered";
 		bar.innerHTML = `${left}<button class="title-btn" data-act="title"><span>${esc(sTitle(S.cur.meta.title))}</span>${icon("down")}</button><div class="spacer"></div>
@@ -704,7 +728,133 @@ const SLASH = [
 	["/github", () => tt("Collegamento con GitHub", "GitHub connection")],
 	["/model", () => tt("Cambia modello", "Switch model")],
 	["/mode", () => tt("Cambia modalità permessi", "Change permission mode")],
+	["/btw", () => tt("Domanda a parte: risponde un sub-agente senza fermare il lavoro", "Side question: a sub-agent answers without stopping the work")],
 ];
+
+const knownCommand = (name) => SLASH.some(([n]) => n === name) || (S.slashExtra || []).some((c) => c.name === name);
+const LIST_MARK = /^( *)([-*•])(?= )/;
+const BULLETS = ["•", "◦", "▪"];
+/** Bullet for a composer line: top-level items carry 2 spaces (see `listKeys`), each level 2 more. */
+const bulletFor = (indent) => BULLETS[Math.min(BULLETS.length - 1, Math.max(0, Math.floor(indent / 2) - 1))];
+
+/**
+ * What the composer's mirror shows under the (then transparent) textarea: a recognized /command at the
+ * start in the palette colours, and list items as bullets. The marker keeps its own width (the dash is
+ * transparent and the bullet is drawn over it), so the caret still lines up with the text.
+ */
+function mirrorHtml(v) {
+	const cmd = v.match(/^\/[\w:-]+/)?.[0];
+	const hasCmd = !!cmd && knownCommand(cmd);
+	let lists = false;
+	const html = v
+		.split("\n")
+		.map((line, i) => {
+			if (i === 0 && hasCmd) return `<span class="cmd"><span>${esc(cmd)}</span></span>${esc(line.slice(cmd.length))}`;
+			const m = line.match(LIST_MARK);
+			if (!m) return esc(line);
+			lists = true;
+			return `${m[1]}<span class="li ${m[1] ? "" : "i0"}" data-b="${bulletFor(m[1].length)}">${esc(m[2])}</span>${esc(line.slice(m[0].length))}`;
+		})
+		.join("\n");
+	return { html: html + "\u200b", on: hasCmd || lists };
+}
+
+/** Insert text at the selection keeping the textarea's undo history. */
+function insertText(ta, str, from = ta.selectionStart, to = ta.selectionEnd) {
+	ta.setSelectionRange(from, to);
+	if (!document.execCommand("insertText", false, str)) {
+		ta.setRangeText(str, from, to, "end");
+		ta.dispatchEvent(new Event("input"));
+	}
+	if (!str) ta.setSelectionRange(from, from); // Chromium leaves the caret on the line above after an empty insert
+}
+
+/** The caret's line: start, end, text, and the list item on it (indent, marker, text) if any. */
+function caretLine(ta) {
+	const { selectionStart: a, value: v } = ta;
+	const ls = v.lastIndexOf("\n", a - 1) + 1;
+	const nl = v.indexOf("\n", a);
+	const le = nl === -1 ? v.length : nl;
+	const line = v.slice(ls, le);
+	const m = line.match(/^( *)([-*•]) (.*)$/);
+	return { a, ls, le, line, item: m && { indent: m[1], text: m[3], prefix: m[1].length + 2 } };
+}
+
+/**
+ * List editing in the composer, like a document editor:
+ * "- " (or "* ") at the start of a line becomes a bullet; Shift+Enter continues the list (on an empty
+ * item it steps out a level, then ends the list); Tab nests the item; Backspace right after a bullet
+ * steps out a level, then removes the bullet. Returns true when it handled the key.
+ */
+function listKeys(ta, e) {
+	if (ta.selectionStart !== ta.selectionEnd || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return false;
+	const { a, ls, le, line, item } = caretLine(ta);
+	const out = (indent) => (indent.length > 2 ? indent.slice(2) : null);
+	if (e.key === " " && !e.shiftKey) {
+		const m = ta.value.slice(ls, a).match(/^( *)[-*•]$/);
+		if (!m) return false;
+		insertText(ta, `${m[1] || "  "}- `, ls, a);
+		return true;
+	}
+	if (!item || a < ls + item.prefix) return false;
+	if (e.key === "Enter" && e.shiftKey) {
+		if (item.text.trim() || a !== le) insertText(ta, `\n${item.indent}- `);
+		else if (out(item.indent) !== null) insertText(ta, `${out(item.indent)}- `, ls, le);
+		else insertText(ta, "", ls, le);
+		return true;
+	}
+	if (e.key === "Tab" && !e.shiftKey) {
+		if (item.indent.length >= 8) return true;
+		insertText(ta, "  ", ls, ls);
+		ta.setSelectionRange(a + 2, a + 2);
+		return true;
+	}
+	if (e.key === "Backspace" && a === ls + item.prefix) {
+		if (out(item.indent) !== null) insertText(ta, `${out(item.indent)}- `, ls, a);
+		else insertText(ta, "", ls, a);
+		return true;
+	}
+	return false;
+}
+
+/** Before sending: list items lose the composer's extra indent and use "-", i.e. plain Markdown. */
+function normalizeLists(text) {
+	const lines = text.split("\n");
+	const items = lines.map((l) => l.match(/^( *)[-*•] +(.*)$/));
+	const min = Math.min(...items.filter(Boolean).map((m) => m[1].length));
+	if (!Number.isFinite(min)) return text;
+	return lines.map((l, i) => (items[i] ? `${" ".repeat(items[i][1].length - min)}- ${items[i][2]}` : l)).join("\n");
+}
+
+/** A user message with "- " lines: those lines become a bulleted list (nested by indent), the rest stays as typed. */
+function userHtml(text) {
+	const lines = text.split("\n");
+	if (!lines.some((l) => /^\s*[-*•]\s+\S/.test(l))) return esc(text);
+	const blocks = [];
+	for (const line of lines) {
+		const m = line.match(/^(\s*)[-*•]\s+(.*)$/);
+		const last = blocks[blocks.length - 1];
+		if (m && m[2].trim()) {
+			const item = { indent: m[1].replace(/\t/g, "  ").length, text: m[2] };
+			if (last?.list) last.items.push(item);
+			else blocks.push({ list: true, items: [item] });
+		} else if (last && !last.list) last.lines.push(line);
+		else blocks.push({ list: false, lines: [line] });
+	}
+	return blocks
+		.map((bl) => {
+			if (bl.list) {
+				const base = Math.min(...bl.items.map((i) => i.indent));
+				return `<ul class="ulist">${bl.items.map((i) => {
+					const d = Math.min(3, Math.floor((i.indent - base) / 2));
+					return `<li${d ? ` class="d${d}"` : ""}>${esc(i.text)}</li>`;
+				}).join("")}</ul>`;
+			}
+			const t = bl.lines.join("\n").replace(/^\n+|\n+$/g, "");
+			return t.trim() ? `<div class="ut">${esc(t)}</div>` : "";
+		})
+		.join("");
+}
 
 function currentOpts() {
 	if (S.cur) return { model: S.cur.meta.model, effort: S.cur.meta.effort, mode: S.cur.meta.mode, envId: S.cur.meta.envId };
@@ -808,7 +958,7 @@ function mountComposer(host, kind) {
 	host.innerHTML = `
 		<div class="composer">
 			<div class="attachments"></div>
-			<textarea rows="1" placeholder="${esc(running ? t("placeholderBusy") : t("placeholder"))}"></textarea>
+			<div class="ta-wrap"><div class="ta-mirror" aria-hidden="true"></div><textarea rows="1" placeholder="${esc(running ? t("placeholderBusy") : t("placeholder"))}"></textarea></div>
 			<div class="row">
 				<button class="icon-btn" data-c="attach" title="${t("attach")}">${icon("plus")}</button>
 				<input type="file" multiple accept="image/*,.txt,.md,.json,.csv,.log,.js,.ts,.py,.html,.css,.xml,.yaml,.yml" hidden>
@@ -819,18 +969,38 @@ function mountComposer(host, kind) {
 		</div>
 		<div class="below" data-kind="${kind}">${chipsHtml(kind)}</div>`;
 	const ta = $("textarea", host);
+	const wrap = $(".ta-wrap", host);
+	const mirror = $(".ta-mirror", host);
 	const send = $("[data-c=send]", host);
 	const file = $("input[type=file]", host);
 	ta.value = S.draft.text;
+	// Commands and list markers are drawn by a mirror under the textarea, whose text then turns transparent.
+	const paint = () => {
+		const { html, on } = mirrorHtml(ta.value);
+		wrap.classList.toggle("hl", on);
+		if (!on) {
+			if (mirror._html) mirror.innerHTML = mirror._html = "";
+			return;
+		}
+		if (mirror._html !== html) mirror.innerHTML = mirror._html = html;
+		mirror.style.left = ta.offsetLeft + "px";
+		mirror.style.top = ta.offsetTop + "px";
+		mirror.style.width = ta.clientWidth + "px"; // without the textarea's scrollbar
+		mirror.style.height = ta.clientHeight + "px";
+		mirror.scrollTop = ta.scrollTop;
+	};
+	host._paint = paint;
 	const autosize = () => {
 		// Empty: natural height (measuring before layout makes the placeholder wrap and inflate it).
 		if (!ta.value || !ta.clientWidth) {
 			ta.style.height = "";
 			if (ta.value) requestAnimationFrame(autosize);
+			paint();
 			return;
 		}
 		ta.style.height = "auto";
 		ta.style.height = Math.min(ta.scrollHeight, 280) + "px";
+		paint();
 	};
 	const isRunning = () => kind === "session" && S.cur && S.cur.status !== "idle";
 	const updateSend = () => {
@@ -839,12 +1009,15 @@ function mountComposer(host, kind) {
 		send.disabled = !r && !hasText;
 		send.classList.toggle("stop", r && !hasText);
 		send.innerHTML = icon(r && !hasText ? "stop" : "send");
+		send.title = r && !hasText ? tt("Ferma", "Stop") : r ? tt("Invia ora (Invio) · Metti in coda per dopo: Ctrl+Invio o clic destro", "Send now (Enter) · Queue for later: Ctrl+Enter or right-click") : tt("Invia (Invio)", "Send (Enter)");
 		ta.placeholder = r ? t("placeholderBusy") : t("placeholder");
 	};
 	host._updateSend = updateSend;
 	autosize();
 	renderAttachments(host);
 	setTimeout(() => ta.focus(), 0);
+	ta.addEventListener("scroll", () => (mirror.scrollTop = ta.scrollTop));
+	new ResizeObserver(() => paint()).observe(ta);
 
 	ta.addEventListener("input", () => {
 		S.draft.text = ta.value;
@@ -852,8 +1025,27 @@ function mountComposer(host, kind) {
 		updateSend();
 		slashMenu(host, ta);
 	});
+	send.addEventListener("contextmenu", (e) => {
+		e.preventDefault();
+		if (ta.value.trim() || S.draft.images.length) submit({ queue: true });
+	});
 	ta.addEventListener("keydown", (e) => {
+		if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) {
+			e.preventDefault();
+			$(".slash-menu", host)?.remove();
+			submit({ queue: true });
+			return;
+		}
 		const menu = $(".slash-menu", host);
+		if (!menu && listKeys(ta, e)) {
+			e.preventDefault();
+			return;
+		}
+		if (menu && e.key === "Escape") {
+			e.preventDefault(); // closes the menu without stopping the agent
+			menu.remove();
+			return;
+		}
 		if (menu && ["ArrowDown", "ArrowUp", "Tab", "Enter"].includes(e.key) && !e.shiftKey) {
 			const opts = $$(".opt", menu);
 			let i = opts.findIndex((o) => o.classList.contains("on"));
@@ -906,19 +1098,32 @@ function mountComposer(host, kind) {
 		if (chip) chipMenu(chip, kind);
 	};
 
-	async function submit() {
-		const text = ta.value.trim();
+	async function submit(opts = {}) {
+		let text = normalizeLists(ta.value).trim();
 		const images = S.draft.images.map(({ data, mimeType }) => ({ type: "image", data, mimeType }));
 		if (!text && !images.length) return;
+		const btw = text.match(/^\/btw(?:\s+([\s\S]*))?$/);
+		if (btw && !btw[1]?.trim()) return toast(tt("Scrivi la domanda dopo /btw", "Type your question after /btw"));
 		send.classList.remove("launch");
 		void send.offsetWidth;
 		send.classList.add("launch");
-		S.draft = { text: "", images: [] };
+		// A side question leaves any attached images in the composer.
+		S.draft = { text: "", images: btw ? S.draft.images : [] };
 		ta.value = "";
 		autosize();
 		renderAttachments(host);
 		updateSend();
 		$(".slash-menu", host)?.remove();
+		if (btw && kind === "session" && S.cur) {
+			try {
+				const b = await api(`/sessions/${S.cur.meta.id}/btw`, { body: { text: btw[1].trim() } });
+				upsertBtw(S.cur, b, true); // the "btw" events may already be newer
+			} catch (err) {
+				toast(err.message, 4000);
+			}
+			return;
+		}
+		if (btw) text = btw[1].trim(); // no session yet: it's just the first question
 		if (kind === "session" && S.cur) {
 			if (text === "/pr") return openPrDialog();
 			if (text === "/usage") return go("/usage");
@@ -929,6 +1134,15 @@ function mountComposer(host, kind) {
 			if (text === "/model") return chipMenu($('[data-chip="model"]', host), kind);
 			if (text === "/mode") return chipMenu($('[data-chip="mode"]', host), kind);
 			S.cur.notices = [];
+			// Ctrl+Enter / right-click: queued, sent when the agent has finished.
+			if (opts.queue) {
+				try {
+					await api(`/sessions/${S.cur.meta.id}/queue`, { body: { text: expandBuiltin(text), images } }); // the list arrives as a "queue" event
+				} catch (err) {
+					toast(err.message, 4000);
+				}
+				return;
+			}
 			await api(`/sessions/${S.cur.meta.id}/prompt`, { body: { text: expandBuiltin(text), images } });
 			return;
 		}
@@ -982,6 +1196,7 @@ async function loadSlashExtra() {
 	} catch {
 		S.slashExtra = [];
 	}
+	for (const h of $$(".composer-wrap")) h._paint?.(); // custom commands are now recognized
 }
 
 function renderAttachments(host) {
@@ -1361,12 +1576,108 @@ function renderSessionView() {
 	renderTopbar();
 	const view = $("#view");
 	view.innerHTML = `<div class="center-col"><div class="transcript" id="transcript"></div></div>`;
-	$("#dock").innerHTML = `<div id="todo-dock"></div><div class="session-composer"><div class="composer-wrap" id="session-composer"></div></div>`;
+	$("#dock").innerHTML = `<div id="todo-dock"></div><div id="btw-dock"></div><div id="queue-dock"></div><div class="session-composer"><div class="composer-wrap" id="session-composer"></div></div>`;
 	mountComposer($("#session-composer"), "session");
 	loadSlashExtra();
 	renderTranscript(true);
 	renderTodos();
+	renderBtw();
+	renderQueue();
 	renderRightPanel();
+	loadPrs();
+}
+
+// ───────────────────────── queued messages & /btw ─────────────────────────
+
+/** Messages queued with Ctrl+Enter, above the composer. They leave one at a time when the agent is done. */
+function renderQueue() {
+	const dock = $("#queue-dock");
+	if (!dock || !S.cur) return;
+	const q = S.cur.queue || [];
+	if (!q.length) {
+		dock.innerHTML = dock._key = "";
+		return;
+	}
+	// Between two queued runs the status is idle for a moment: only call it paused once that lasts.
+	const paused = S.cur.status === "idle" && Date.now() - (S.cur.idleAt ?? 0) > 350;
+	const rows = q
+		.map((m) => `<div class="qrow" data-q="${esc(m.id)}"><span class="qn">${icon("schedule")}</span><span class="qt" title="${esc(m.text)}">${esc(m.text.replace(/\s+/g, " "))}</span>${m.images ? `<span class="qi">${icon("image")}${m.images}</span>` : ""}<button class="icon-btn" data-qa="edit" title="${tt("Modifica", "Edit")}">${icon("edit")}</button><button class="icon-btn" data-qa="send" title="${tt("Invia ora", "Send now")}">${icon("send")}</button><button class="icon-btn" data-qa="rm" title="${tt("Rimuovi", "Remove")}">${icon("x")}</button></div>`)
+		.join("");
+	const head = `<div class="h"><span>${tt("In coda", "Queued")} ${q.length}</span><span>${paused ? tt("In pausa · invia o rimuovi", "Paused · send or remove") : tt("Partono quando l'agente ha finito", "Sent when the agent is done")}</span></div>`;
+	const key = head + rows;
+	if (dock._key === key) return;
+	// Only the first appearance animates: later updates don't replay it.
+	dock.innerHTML = `<div class="queue-dock ${dock._key ? "calm" : ""}">${key}</div>`;
+	dock._key = key;
+	dock.onclick = async (e) => {
+		const b = e.target.closest("[data-qa]");
+		const id = b?.closest("[data-q]")?.dataset.q;
+		if (!id || !S.cur) return;
+		const base = `/sessions/${S.cur.meta.id}/queue/${encodeURIComponent(id)}`;
+		try {
+			if (b.dataset.qa === "send") return void (await api(base + "/send", { body: {} }));
+			const { removed } = await api(base, { method: "DELETE" });
+			if (b.dataset.qa === "edit" && removed) {
+				const ta = $("#session-composer textarea");
+				S.draft.text = S.draft.text.trim() ? `${S.draft.text}\n${removed.text}` : removed.text;
+				S.draft.images.push(...(removed.images ?? []).map(({ data, mimeType }) => ({ data, mimeType })));
+				if (ta) {
+					ta.value = S.draft.text;
+					ta.dispatchEvent(new Event("input"));
+					ta.focus();
+					ta.setSelectionRange(ta.value.length, ta.value.length);
+					renderAttachments($("#session-composer"));
+				}
+			}
+		} catch (err) {
+			toast(err.message, 4000);
+		}
+	};
+}
+
+function upsertBtw(c, b, onlyNew = false) {
+	c.btws ??= [];
+	const i = c.btws.findIndex((x) => x.id === b.id);
+	if (i >= 0 && onlyNew) return;
+	if (i >= 0) c.btws[i] = b;
+	else c.btws.push(b);
+	if (c === S.cur) renderBtw();
+}
+
+function btwBody(b) {
+	if (b.status === "error" && !b.text) return `<div class="notice error">${icon("x")} <span>${esc(b.error || tt("Nessuna risposta", "No answer"))}</span></div>`;
+	if (!b.text) return `<div class="btw-wait">${loader(20, "sm")}<span class="shimmer">${esc(b.tool || tt("Un sub-agente sta rispondendo…", "A sub-agent is answering…"))}</span></div>`;
+	return `<div class="md ${b.status === "running" ? "cursor" : ""}">${md(b.text)}</div>`;
+}
+
+/** /btw answers: cards above the composer, outside the conversation. Each card updates in place while it streams. */
+function renderBtw() {
+	const dock = $("#btw-dock");
+	if (!dock || !S.cur) return;
+	const list = S.cur.btws || [];
+	for (const card of $$(".btw-card", dock)) if (!list.some((b) => b.id === card.dataset.b)) card.remove();
+	for (const b of list) {
+		let card = $(`.btw-card[data-b="${CSS.escape(b.id)}"]`, dock);
+		if (!card) {
+			card = el(`<div class="btw-card" data-b="${esc(b.id)}"><div class="h"><span class="btw-tag">/btw</span><span class="q" title="${esc(b.question)}">${esc(b.question)}</span><button class="icon-btn" data-bx title="${tt("Chiudi", "Close")}">${icon("x")}</button></div><div class="body"></div></div>`);
+			dock.appendChild(card);
+		}
+		const html = btwBody(b);
+		const body = $(".body", card);
+		if (body._html !== html) {
+			const stick = body.scrollHeight - body.scrollTop - body.clientHeight < 24;
+			body.innerHTML = body._html = html;
+			if (stick) body.scrollTop = body.scrollHeight;
+		}
+	}
+	dock.onclick = (e) => {
+		const card = e.target.closest("[data-bx]")?.closest(".btw-card");
+		if (!card || !S.cur) return;
+		const id = card.dataset.b;
+		S.cur.btws = (S.cur.btws || []).filter((b) => b.id !== id);
+		card.remove();
+		api(`/sessions/${S.cur.meta.id}/btw/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+	};
 }
 
 let rafPending = false;
@@ -1415,7 +1726,7 @@ function renderTranscript(forceBottom = false) {
 			flush();
 			const text = typeof m.content === "string" ? m.content : m.content.filter((x) => x.type === "text").map((x) => x.text).join("\n");
 			const imgs = typeof m.content === "string" ? [] : m.content.filter((x) => x.type === "image");
-			html += `<div class="msg-user"><div class="bubble">${imgs.length ? `<div class="imgs">${imgs.map((i) => `<img src="data:${i.mimeType};base64,${i.data}">`).join("")}</div>` : ""}${esc(text)}</div></div>`;
+			html += `<div class="msg-user"><div class="bubble">${imgs.length ? `<div class="imgs">${imgs.map((i) => `<img src="data:${i.mimeType};base64,${i.data}">`).join("")}</div>` : ""}${userHtml(text)}</div></div>`;
 		} else if (m.role === "assistant") {
 			(m.content || []).forEach((part, pi) => {
 				if (part.type === "text" && part.text?.trim()) {
@@ -1513,7 +1824,7 @@ function subagentHtml(call, status, open, out) {
 	const live = sa && sa.phase !== "end";
 	const steps = sa?.steps ?? [];
 	return `<div class="tool subagent ${open ? "open" : ""} ${live ? "live" : ""}" data-tool="${call.id}" style="--ac:${esc(sa?.color ?? "var(--primary)")}">
-		<div class="tool-line">${icon("smart_toy")}<b>${esc(toolLabel("task"))}</b><span class="agent-chip">${esc(name)}</span><span class="arg">${esc(call.arguments?.description ?? "")}</span>${steps.length ? `<span class="steps-count">${steps.length} ${tt("passi", "steps")}</span>` : ""}${status}</div>
+		<div class="tool-line">${icon("smart_toy")}<b>${esc(toolLabel("task"))}</b><span class="agent-chip">${esc(name)}</span><span class="arg">${esc(call.arguments?.description ?? "")}</span>${steps.length ? `<span class="steps-count">${steps.length} ${steps.length === 1 ? tt("passo", "step") : tt("passi", "steps")}</span>` : ""}${status}</div>
 		${steps.length ? `<div class="sa-steps">${steps.slice(-8).map((p) => `<div class="sa-step ${p.status}">${p.status === "running" ? loader(14, "sm") : icon(p.status === "error" ? "close" : "check")}<b>${esc(toolLabel(p.tool))}</b><span>${esc(p.text ?? "")}</span></div>`).join("")}${steps.length > 8 ? `<div class="sa-more">+${steps.length - 8} ${tt("passi precedenti", "earlier steps")}</div>` : ""}</div>` : ""}
 		${sa?.model ? `<div class="sa-meta">${icon("memory")} ${esc(sa.model)}</div>` : ""}
 		<div class="tool-out">${out}</div></div>`;
@@ -1681,6 +1992,8 @@ function onWs(msg) {
 			refreshChips();
 		}
 		if (msg.type === "sessions_changed") refreshSessionsSoon();
+		// An AI agent (Argon control over MCP) asked to show a page.
+		if (msg.type === "navigate" && typeof msg.hash === "string" && msg.hash.startsWith("/")) go(msg.hash);
 		if (msg.type === "environments_changed") reloadBootSoon();
 		if (msg.type === "settings_changed") reloadBootSoon();
 		if (msg.type === "models_changed") {
@@ -1784,11 +2097,28 @@ function onWs(msg) {
 				renderTodos();
 			}
 			$("#session-composer")?._updateSend?.();
+			if (msg.status === "idle") {
+				c.idleAt = Date.now();
+				setTimeout(renderQueue, 400);
+			}
+			renderQueue();
+			break;
+		case "queue":
+			c.queue = msg.queue;
+			renderQueue();
+			break;
+		case "btw":
+			upsertBtw(c, msg.btw);
+			break;
+		case "btw_dismiss":
+			c.btws = (c.btws || []).filter((b) => b.id !== msg.id);
+			renderBtw();
 			break;
 		case "notice":
 			c.notices.push(msg);
 			break;
 		case "meta":
+			if (sessionPrsOf(msg.meta).length !== sessionPrsOf(c.meta).length) setTimeout(() => loadPrs(true), 0);
 			c.meta = msg.meta;
 			renderTopbar();
 			refreshChips();
@@ -1820,6 +2150,7 @@ function onWs(msg) {
 setInterval(() => {
 	const e = document.getElementById("elapsed");
 	if (e && S.cur?.runStart) e.textContent = `${Math.floor((Date.now() - S.cur.runStart) / 1000)}s`;
+	for (const x of document.querySelectorAll("#rightpanel [data-since]")) x.textContent = fmtDur(Date.now() - Number(x.dataset.since));
 }, 1000);
 
 if ("Notification" in window && Notification.permission === "default") setTimeout(() => Notification.requestPermission().catch(() => {}), 4000);
@@ -1829,42 +2160,142 @@ boot();
 // ───────────────────────── git, pull requests, background, import ─────────────────────────
 export const initFile = () => S.settings?.context?.initFile || "ARGON.md";
 
+// Git glyphs drawn like the GitHub ones (open, merged, closed, draft pull request).
+const GIT_SVG = {
+	open: '<circle cx="6" cy="6" r="2.25"/><circle cx="6" cy="18" r="2.25"/><circle cx="18" cy="18" r="2.25"/><path d="M6 8.25v7.5"/><path d="M18 15.75V9a3 3 0 0 0-3-3h-4.5"/><path d="m12.5 3.5-2.5 2.5 2.5 2.5"/>',
+	merged: '<circle cx="6" cy="6" r="2.25"/><circle cx="6" cy="18" r="2.25"/><circle cx="18" cy="13" r="2.25"/><path d="M6 8.25v7.5"/><path d="M6 8.25c0 3 2.2 4.75 5 4.75h4.75"/>',
+	closed: '<circle cx="6" cy="6" r="2.25"/><circle cx="6" cy="18" r="2.25"/><circle cx="18" cy="18" r="2.25"/><path d="M6 8.25v7.5"/><path d="M18 15.75V11.5"/><path d="m15.75 4.25 4.5 4.5m0-4.5-4.5 4.5"/>',
+	draft: '<circle cx="6" cy="6" r="2.25"/><circle cx="6" cy="18" r="2.25"/><circle cx="18" cy="18" r="2.25"/><path d="M6 8.25v7.5"/><path d="M18 15.75v-1.25M18 11.25V10M18 6.75V5.5"/>',
+};
+export const gitIcon = (kind, size = 16) => `<svg class="git-ico ${kind}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${GIT_SVG[kind]}</svg>`;
+export function prKind(p) {
+	const st = String(p.state || "").toUpperCase();
+	return st === "MERGED" ? "merged" : st === "CLOSED" ? "closed" : p.draft ? "draft" : "open";
+}
+const prStateLabel = (k) => ({ open: tt("Aperta", "Open"), merged: tt("Unita", "Merged"), closed: tt("Chiusa", "Closed"), draft: tt("Bozza", "Draft") })[k];
+
+/** All pull requests of a session (opened from it or found on import), newest first — same rule as the core. */
+export function sessionPrsOf(meta) {
+	const seen = new Set();
+	return [...(meta?.prs ?? []), ...(meta?.git?.prs ?? [])]
+		.filter((p) => {
+			const k = p.url || String(p.number);
+			return seen.has(k) ? false : (seen.add(k), true);
+		})
+		.sort((a, b) => b.number - a.number);
+}
+
+/** Latest PR state from GitHub (the core re-reads it at most once a minute). */
+async function loadPrs(refresh = false) {
+	const c = S.cur;
+	if (!c || !sessionPrsOf(c.meta).length) return;
+	try {
+		const prs = await api(`/sessions/${c.meta.id}/prs${refresh ? "?refresh=1" : ""}`);
+		if (S.cur !== c || JSON.stringify(prs) === JSON.stringify(c.prs)) return;
+		c.prs = prs;
+		renderRightPanel();
+	} catch {}
+}
+setInterval(() => S.cur && S.rightPanel && !document.hidden && loadPrs(), 60_000);
+
+function prRow(p) {
+	const k = prKind(p);
+	const diff = (k === "open" || k === "draft") && p.additions != null ? `<span class="add">+${p.additions}</span><span class="del">−${p.deletions}</span>` : "";
+	const ck = { pass: ["check_circle", tt("Controlli superati", "Checks passed")], fail: ["cancel", tt("Controlli falliti", "Checks failed")], pending: ["radio_button_unchecked", tt("Controlli in corso", "Checks running")] }[p.checks];
+	return `<div class="pr-item" data-prurl="${esc(p.url)}" title="${esc(prStateLabel(k))} · ${esc(p.title || "")}">
+		<span class="pr-ico ${k}">${gitIcon(k)}</span>
+		<span class="pr-main"><span class="pr-t">${esc(p.title || `Pull request #${p.number}`)}</span><span class="pr-s"><span>#${p.number}</span>${diff}</span></span>
+		<span class="pr-side"><button class="icon-btn" data-prmenu="${esc(p.url)}" title="${tt("Altro", "More")}">${icon("more")}</button>${ck ? `<span class="pr-ck ${p.checks}" title="${esc(ck[1])}">${icon(ck[0])}</span>` : ""}</span>
+	</div>`;
+}
+
 function rpChanges(c, g) {
 	const ch = g?.changes;
-	if (!g?.root) return "";
+	const prs = c.prs ?? sessionPrsOf(c.meta);
+	if (!g?.root && !prs.length) return "";
 	const has = !!(ch && (ch.files || ch.added || ch.removed));
+	const open = !!S.prOpen?.[c.meta.id];
+	const rest = prs.slice(3);
+	const merged = rest.filter((p) => prKind(p) === "merged").length;
 	return `<div class="rp-sec"><div class="rp-h">${t("changes")}</div>
-		<div class="rp-changes">${icon("edit")}<span>${ch?.files ?? 0} file</span><span class="stats"><span class="add">+${ch?.added ?? 0}</span> <span class="del">-${ch?.removed ?? 0}</span></span></div>
-		<div style="margin-top:8px;display:flex;justify-content:flex-end"><button class="pr-btn" data-pr ${has ? "" : "disabled"} title="${has ? tt("Crea una pull request (/pr)", "Create a pull request (/pr)") : tt("Nessuna modifica da proporre", "No changes to propose")}">${icon("merge")} ${tt("Crea PR", "Create PR")}</button></div>
+		${(open ? prs : prs.slice(0, 3)).map(prRow).join("")}
+		${rest.length ? `<button class="rp-fold ${open ? "open" : ""}" data-prfold>${icon("chev")}<span class="t">${open ? tt("Mostra meno", "Show less") : tt(`${rest.length} pull request precedenti`, `${rest.length} earlier pull request${rest.length > 1 ? "s" : ""}`)}</span>${merged && !open ? `<span class="dim">${merged} ${tt(merged > 1 ? "unite" : "unita", "merged")}</span>` : ""}</button>` : ""}
+		${g?.root ? `<div class="rp-changes ${prs.length ? "sep" : ""}">${icon("edit")}<span>${ch?.files ?? 0} file</span><span class="stats"><span class="add">+${ch?.added ?? 0}</span> <span class="del">-${ch?.removed ?? 0}</span></span></div>
+		<div class="rp-pr-act"><button class="pr-btn" data-pr ${has ? "" : "disabled"} title="${has ? tt("Crea una pull request (/pr)", "Create a pull request (/pr)") : tt("Nessuna modifica da proporre", "No changes to propose")}">${icon("merge")} ${tt("Crea PR", "Create PR")}</button></div>` : ""}
 	</div>`;
 }
 
 function rpGit(c) {
-	const prs = [...(c.meta.prs ?? []).map((p) => ({ ...p, state: "OPEN" })), ...(c.meta.git?.prs ?? [])];
 	const commits = c.meta.git?.commits ?? [];
-	if (!prs.length && !commits.length) return "";
-	return `<div class="rp-sec"><div class="rp-h">${tt("Git della sessione", "Session git")}</div>
-		${prs.length ? `<div class="pr-list">${prs.slice(0, 6).map((p) => `<a href="${esc(p.url)}" target="_blank" rel="noopener">${icon("merge")} #${p.number} ${esc(p.title)}</a>`).join("")}</div>` : ""}
+	if (!commits.length) return "";
+	return `<div class="rp-sec"><div class="rp-h">${tt("Commit della sessione", "Session commits")}</div>
 		${commits.slice(0, 5).map((m) => `<div class="rp-row"><code style="font:11.5px var(--mono);color:var(--primary)">${esc(m.hash)}</code><span class="t">${esc(m.subject)}</span></div>`).join("")}
 	</div>`;
 }
 
+const fmtDur = (ms) => {
+	const s = Math.max(0, Math.round(ms / 1000));
+	return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+};
+
+/** Background shell tasks: running ones with their time and a stop button, finished ones folded. */
 function rpBackground(c) {
 	const list = c.background ?? [];
 	if (!list.length) return "";
-	return `<div class="rp-sec"><div class="rp-h">${tt("Terminali in background", "Background terminals")} <span>${list.filter((p) => p.status === "running").length}</span></div>
-		${list.map((p) => `<div class="bg-row"><span class="dot ${p.status === "running" ? "" : "off"}"></span><code title="${esc(p.command)}">${esc(p.command)}</code>${p.status === "running" ? `<button class="icon-btn" data-bgkill="${p.id}" title="${tt("Ferma", "Stop")}">${icon("stop_circle")}</button>` : `<span class="dim">${p.exitCode ?? ""}</span>`}</div>`).join("")}
+	const running = list.filter((p) => p.status === "running");
+	const done = list.filter((p) => p.status !== "running").sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
+	const open = !!S.bgOpen?.[c.meta.id];
+	const row = (p) => {
+		const end = p.status === "running" ? `<span class="el" data-since="${p.startedAt}">${fmtDur(Date.now() - p.startedAt)}</span><button class="bg-stop" data-bgkill="${esc(p.id)}" title="${tt("Ferma", "Stop")}"><i></i></button>` : `<span class="el ${p.status === "exited" && p.exitCode === 0 ? "" : "bad"}">${p.status === "killed" ? tt("fermato", "stopped") : p.exitCode === 0 ? fmtDur((p.endedAt ?? p.startedAt) - p.startedAt) : `exit ${p.exitCode ?? "?"}`}</span>`;
+		return `<div class="bg-item ${p.status}" title="${esc(p.command)}">${icon("terminal")}<span class="t">${esc(p.description || p.command)}</span>${end}</div>`;
+	};
+	return `<div class="rp-sec"><div class="rp-h">${tt("Attività in background", "Background tasks")}</div>
+		${running.map(row).join("")}
+		${done.length ? `<button class="rp-fold ${open ? "open" : ""}" data-bgfold>${icon("task_alt")}<span class="t">${done.length} ${tt(done.length > 1 ? "finite" : "finita", "finished")}</span>${icon("chev", "end")}</button>${open ? done.map(row).join("") : ""}` : ""}
 	</div>`;
 }
 
 document.addEventListener("click", async (e) => {
 	if (e.target.closest("[data-pr]") && !e.target.closest("[data-pr]").disabled) return openPrDialog();
+	if (S.cur && e.target.closest("[data-prfold]")) {
+		(S.prOpen ??= {})[S.cur.meta.id] = !S.prOpen[S.cur.meta.id];
+		return renderRightPanel();
+	}
+	if (S.cur && e.target.closest("[data-bgfold]")) {
+		(S.bgOpen ??= {})[S.cur.meta.id] = !S.bgOpen[S.cur.meta.id];
+		return renderRightPanel();
+	}
+	const pm = e.target.closest("[data-prmenu]");
+	if (pm) return prMenu(pm, pm.dataset.prmenu);
+	const pr = e.target.closest("[data-prurl]");
+	if (pr) return void window.open(pr.dataset.prurl, "_blank");
 	const k = e.target.closest("[data-bgkill]");
 	if (k && S.cur) {
 		await api(`/sessions/${S.cur.meta.id}/background/${k.dataset.bgkill}/kill`, { body: {} });
 		toast(tt("Processo fermato", "Process stopped"));
 	}
 });
+
+function prMenu(anchor, url) {
+	const p = popover(
+		anchor,
+		`<button class="opt" data-a="open">${icon("external")} ${tt("Apri su GitHub", "Open on GitHub")}</button>
+		 <button class="opt" data-a="copy">${icon("link")} ${tt("Copia link", "Copy link")}</button>
+		 <button class="opt" data-a="refresh">${icon("refresh")} ${tt("Aggiorna stato", "Refresh status")}</button>`,
+		{ below: true },
+	);
+	p.onclick = async (e) => {
+		const a = e.target.closest("[data-a]")?.dataset.a;
+		if (!a) return;
+		closePop();
+		if (a === "open") window.open(url, "_blank");
+		if (a === "copy") {
+			await navigator.clipboard.writeText(url).catch(() => {});
+			toast(tt("Link copiato", "Link copied"));
+		}
+		if (a === "refresh") loadPrs(true);
+	};
+}
 
 export async function openPrDialog() {
 	if (!S.cur) return toast(tt("Apri una sessione per creare una PR", "Open a session to create a PR"));
