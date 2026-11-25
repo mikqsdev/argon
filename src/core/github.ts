@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 
 import { promisify } from "node:util";
 import { setApiKey, removeCredential, resolveApiKey, credentialSource } from "./auth.js";
+import type { PrStatus } from "./sessions.js";
 
 const run = promisify(execFile);
 
@@ -167,6 +168,50 @@ export async function prsSince(cwd: string, since: number) {
 	} catch {
 		return [];
 	}
+}
+
+/** Summarise a PR's checks: failing if any failed, pending while any runs, null when there are none. */
+function checksRollup(list: any[] | undefined): "pass" | "fail" | "pending" | null {
+	if (!list?.length) return null;
+	let pending = false;
+	for (const c of list) {
+		const v = String(c.conclusion || c.state || "").toUpperCase();
+		if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"].includes(v)) return "fail";
+		if ((c.status && c.status !== "COMPLETED") || v === "PENDING" || v === "EXPECTED" || !v) pending = true;
+	}
+	return pending ? "pending" : "pass";
+}
+
+/**
+ * Current state of some pull requests (title, open/merged/closed, draft, +/−, checks), read with gh.
+ * PRs that can't be read are left out. `ref` is the PR URL (works across repositories) or its number.
+ */
+export async function prDetails(cwd: string, refs: (string | number)[]): Promise<PrStatus[]> {
+	if (!refs.length) return [];
+	const env = await ghEnv();
+	const one = async (ref: string | number): Promise<PrStatus | null> => {
+		try {
+			const { stdout } = await run("gh", ["pr", "view", String(ref), "--json", "number,title,url,state,isDraft,additions,deletions,statusCheckRollup"], {
+				cwd: existsSync(cwd) ? cwd : undefined,
+				windowsHide: true,
+				timeout: 20_000,
+				env,
+			});
+			const d = JSON.parse(stdout);
+			return { number: d.number, title: d.title, url: d.url, state: d.state, draft: !!d.isDraft, additions: d.additions, deletions: d.deletions, checks: checksRollup(d.statusCheckRollup), checkedAt: Date.now() };
+		} catch {
+			return null;
+		}
+	};
+	const out: PrStatus[] = [];
+	for (let i = 0; i < refs.length; i += 6) out.push(...((await Promise.all(refs.slice(i, i + 6).map(one))).filter(Boolean) as PrStatus[]));
+	return out;
+}
+
+/** A pull request URL printed by `gh pr create` (or anything else), with its number. */
+export function findPrUrl(text: string): { url: string; number: number } | null {
+	const m = text.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d+)/);
+	return m ? { url: m[0], number: Number(m[1]) } : null;
 }
 
 export interface PrOptions {

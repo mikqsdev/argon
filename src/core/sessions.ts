@@ -30,15 +30,54 @@ export interface SessionMeta {
 	imported?: boolean;
 	/** Git context captured on import / PR creation. */
 	git?: SessionGit;
-	/** Pull requests opened from this session. */
-	prs?: { number: number; url: string; title: string; branch: string; createdAt: number }[];
+	/** Pull requests opened from this session (from the PR dialog, or by the agent with `gh pr create`). */
+	prs?: (PrStatus & { branch: string; createdAt: number })[];
+}
+
+/** All pull requests of a session (opened from it, or found on import), newest first, without duplicates. */
+export function sessionPrs(meta: SessionMeta): PrStatus[] {
+	const seen = new Set<string>();
+	const out: PrStatus[] = [];
+	for (const p of [...(meta.prs ?? []), ...(meta.git?.prs ?? [])]) {
+		const key = p.url || String(p.number);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		out.push({ number: p.number, url: p.url, title: p.title, state: p.state, draft: p.draft, additions: p.additions, deletions: p.deletions, checks: p.checks, checkedAt: p.checkedAt });
+	}
+	return out.sort((a, b) => b.number - a.number);
+}
+
+/** Store fresh PR details into the session's PR lists (matched by URL, else by number). */
+export function mergePrStatus(meta: SessionMeta, fresh: PrStatus[]): boolean {
+	let changed = false;
+	for (const p of [...(meta.prs ?? []), ...(meta.git?.prs ?? [])]) {
+		const f = fresh.find((x) => (p.url && x.url === p.url) || x.number === p.number);
+		if (!f) continue;
+		Object.assign(p, { title: f.title || p.title, url: f.url || p.url, state: f.state, draft: f.draft, additions: f.additions, deletions: f.deletions, checks: f.checks, checkedAt: f.checkedAt });
+		changed = true;
+	}
+	return changed;
+}
+
+/** What GitHub last said about a pull request (filled in by `prDetails`; all optional until then). */
+export interface PrStatus {
+	number: number;
+	url: string;
+	title: string;
+	state?: string;
+	draft?: boolean;
+	additions?: number;
+	deletions?: number;
+	/** Checks rollup: null when the PR has none. */
+	checks?: "pass" | "fail" | "pending" | null;
+	checkedAt?: number;
 }
 
 export interface SessionGit {
 	repo?: string;
 	branch?: string;
 	commits?: { hash: string; subject: string; date: string }[];
-	prs?: { number: number; title: string; url: string; state: string }[];
+	prs?: PrStatus[];
 	changes?: { files: number; added: number; removed: number };
 	capturedAt: number;
 }

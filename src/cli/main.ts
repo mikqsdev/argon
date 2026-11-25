@@ -99,6 +99,7 @@ function help(): void {
 		["argon stats [7d|30d|all]", T("statistiche d'uso", "usage statistics")],
 		[T("argon sessions [testo]", "argon sessions [text]"), T("elenca le sessioni", "list sessions")],
 		["argon mcp [add|remove|enable|disable]", T("server MCP", "MCP servers")],
+		["argon mcp serve", T("Argon come server MCP per altri agenti AI (attivalo in Impostazioni → Controllo agenti AI)", "Argon as an MCP server for other AI agents (turn it on in Settings → AI agent control)")],
 		[T("argon env [add <nome> [cartella]|rm <nome>]", "argon env [add <name> [folder]|rm <name>]"), T("ambienti (progetti)", "environments (projects)")],
 		["argon skills | memory", T("skill, comandi e memoria", "skills, commands and memory")],
 		["argon config [get|set|path]", T("impostazioni", "settings")],
@@ -190,7 +191,7 @@ async function main() {
 			const { paths } = await import("../core/paths.js");
 			const { writeFileSync, rmSync } = await import("node:fs");
 			const { join } = await import("node:path");
-			const { url, close } = await startServer({ port: f.port ? Number(f.port) : 0, open: false });
+			const { url, close } = await startServer({ port: f.port ? Number(f.port) : 0, open: false, controlPort: !!(f as any).advertise });
 			const u = new URL(url);
 			const info = { url, port: Number(u.port), token: u.searchParams.get("t"), pid: process.pid, version: VERSION };
 			const file = join(paths.home, "core.json");
@@ -235,6 +236,11 @@ async function main() {
 			printSessions(args.join(" ") || undefined);
 			return;
 		case "mcp":
+			if (args[0] === "serve") {
+				// Argon itself as an MCP server (stdio) for other AI agents; needs AI agent control turned on.
+				const { mcpServe } = await import("./mcp-serve.js");
+				return mcpServe();
+			}
 			await doMcp(args);
 			await closeMcp();
 			return process.exit(0);

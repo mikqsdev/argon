@@ -52,11 +52,13 @@ src/core/         shared engine (no UI)
   github.ts       GitHub status (token or gh), git state, createPullRequest
   importer.ts     import CLI sessions into the GUI with git context
   background.ts   background shell processes per session (bash_output / kill_bash tools)
+  control.ts      AI agent control: tools to operate Argon itself (permission groups), the MCP server for them, the built-in "Argon" connector
   desktop.ts      find/launch the Tauri app (used by `argon-core gui`)
   tools/          read, write, edit, bash, ls, glob, grep, web, todo, memory, skill, task, ask_user
 src/server/server.ts   127.0.0.1 HTTP + WebSocket API (token-protected) used by the GUI and the Rust CLI
 src/cli/
   main.ts         `argon-core`: subcommands (login, mcp, env, serve…), headless -p; the Rust CLI forwards subcommands here
+  mcp-serve.ts    `argon mcp serve`: stdio MCP bridge to the running core's `/mcp` (or an in-process core)
   console.ts      Windows: reopen console stdin as a TTY when running on a GUI-subsystem runtime
   tui.ts, screen.ts, ui.ts, commands.ts   legacy TypeScript TUI + shared command helpers
 rust/
@@ -78,6 +80,10 @@ test/             *.test.mjs (node:test), fixtures/{echo-mcp,faux-core}.mjs, har
 - Settings: add the field to the `Settings` type **and** `DEFAULT_SETTINGS`; `cli.*` is CLI-only, everything else is shared. Usage limits are always shared.
 - The Rust CLI holds no agent logic: new features go into the core (and its HTTP API), then into the clients. Sessions created by the CLI pass `origin: "cli"`; list them with `GET /sessions?origin=all`.
 - The CLI creates its session on the first message (no empty sessions).
+- Talking to a running agent: `POST /sessions/:id/prompt` steers (read after the current step); `POST /sessions/:id/queue` waits for the run to end (`ArgonSession.queue`, drained one at a time, paused after a stop or an error; `queue` events); `POST /sessions/:id/btw` answers a side question with a read-only sub-agent that never touches the conversation (`btw` events, kept in memory only).
+- The GUI composer highlights through a mirror (`.ta-mirror`) under a transparent textarea: it must keep the textarea's exact text metrics (font, `letter-spacing: normal`, padding, width). List items stay Markdown in the textarea (`  - item`, 2 extra spaces per level); the mirror draws the bullet over the transparent dash, and `normalizeLists` strips the extra indent on send.
+- AI agent control (`settings.agentControl`, off by default): tools live in `control.ts`, each in a permission group (`settings`, `agents`, `connectors`, `sessions`, `security`); `agentControl` itself can never be changed by a tool. The core serves them on `/mcp` (Streamable HTTP, stateless, token: `X-Argon-Token`, or `Bearer` + `agentControl.token`; requests with an `Origin` are refused), optionally on the fixed `agentControl.port` (desktop core only), and to Argon's own agent as `mcp__argon__*`. A new tool needs: entry in `TOOLS`, Italian title in `TITLES_IT`, a test in `test/control.test.mjs`.
+- Session pull requests: `meta.prs` (PR dialog, or the agent's `gh pr create` output) + `meta.git.prs` (import); `GET /sessions/:id/prs` refreshes their state/+/−/checks with `gh` at most once a minute and stores it in the meta (the sidebar badge reads it).
 - GUI: no framework, no bundler. Render with template strings + `esc()` for every interpolated value. Raw HTML from the model is escaped in `md()`; keep the CSP in server.ts strict.
 - GUI transcript updates go through `reconcile()` (only changed blocks are replaced) so animations don't restart while streaming — don't replace it with `innerHTML`.
 - Native `<select>` elements are upgraded automatically to M3 menus by `lib.js` (MutationObserver); dispatch `change` on the select when setting values programmatically.
@@ -92,4 +98,5 @@ test/             *.test.mjs (node:test), fixtures/{echo-mcp,faux-core}.mjs, har
 - Windows + `x86_64-pc-windows-gnu`: crates using `windows-link` need MinGW binutils (`as`, `dlltool`) on PATH — `scripts/rust-env.mjs` / `rust/env.sh` add WinLibs or MSYS2. With the MSVC toolchain nothing is needed.
 - Pi's Anthropic provider only knows adaptive thinking for 4.6/4.7 model ids; `adaptiveThinkingPatch` (effort.ts) upgrades newer Claude ids through `onPayload`.
 - `where rg` on Windows prints to stderr when ripgrep is missing: child processes used by the TUI must not inherit stderr.
+- On Windows `rust/target/release/argon.exe` (CLI) and `Argon.exe` (desktop app) are the same file: a release build of the CLI replaces the app. `npm run dist` copies the CLI into the stage before `tauri build` writes the app last; to refresh only the CLI, build it, copy it to `rust/target/release/bin/`, then rebuild (or restore) `Argon.exe`.
 - The core prints exactly one `ARGON_READY {json}` line on stdout; clients parse it, so don't log to stdout before it in `serve`.

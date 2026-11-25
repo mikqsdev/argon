@@ -21,6 +21,17 @@ import {
 	disconnectGithub,
 	gitState,
 	createPullRequest,
+	saveSkill,
+	saveCommand,
+	controlMcpServer,
+	controlToolList,
+	setControlContext,
+	builtinConnectorStatus,
+	ensureControlToken,
+	type ControlContext,
+	prDetails,
+	sessionPrs,
+	mergePrStatus,
 	pendingCliSessions,
 	importCliSessions,
 	listAgents,
@@ -68,6 +79,7 @@ import {
 } from "../core/index.js";
 import { openAppWindow, openUrl } from "../core/open.js";
 import type { Api, Model } from "@mariozechner/pi-ai";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(here, "..", "..");
@@ -121,7 +133,7 @@ function token(): string {
 	return t;
 }
 
-export async function startServer(opts: { port?: number; open?: boolean } = {}): Promise<{ url: string; close: () => void }> {
+export async function startServer(opts: { port?: number; open?: boolean; /** Also serve MCP on settings.agentControl.port (the desktop app's core). */ controlPort?: boolean } = {}): Promise<{ url: string; close: () => void }> {
 	const settings = loadSettings();
 	/** 0 = pick a free port (used by the desktop app). */
 	let port = opts.port ?? settings.general.guiPort;
@@ -153,6 +165,8 @@ export async function startServer(opts: { port?: number; open?: boolean } = {}):
 		const data = JSON.stringify(msg);
 		for (const c of clients) if (c.readyState === 1) c.send(data);
 	};
+	/** MCP connectors for the clients: the built-in "Argon" one, then the configured servers. */
+	const connectors = () => [builtinConnectorStatus(), ...mcpStatus()];
 
 	function slim(e: ArgonEvent): any {
 		if (e.type === "message_update") {
@@ -182,6 +196,139 @@ export async function startServer(opts: { port?: number; open?: boolean } = {}):
 		});
 	}
 
+	/** Pull request refreshes in flight, per session. */
+	const prRefresh = new Map<string, Promise<void>>();
+
+	// ───────── AI agent control (MCP): what the tools can do in this server ─────────
+	const afterSettings = () => {
+		void syncMcp().then(() => {
+			for (const s of live.values()) s.refresh();
+			broadcast({ type: "mcp_changed", mcp: connectors() });
+		});
+		for (const s of live.values()) s.refresh();
+		syncControlListener();
+	};
+	const controlCtx: ControlContext = {
+		settingsChanged: () => {
+			afterSettings();
+			broadcast({ type: "settings_changed" });
+		},
+		changed: (what) => broadcast({ type: what === "environments" ? "environments_changed" : "sessions_changed" }),
+		navigate: (hash) => {
+			broadcast({ type: "navigate", hash });
+			return [...clients].filter((c) => c.readyState === 1).length;
+		},
+		sessions: {
+			async create(o) {
+				const env = listEnvironments().find((e) => e.id === o.envId);
+				const cwd = resolve(env?.cwd ?? o.cwd ?? homedir());
+				const s = await ArgonSession.create({ cwd, envId: env?.id ?? null, model: o.model, mode: o.mode as any, origin: "gui" });
+				attach(s);
+				s.persist();
+				broadcast({ type: "sessions_changed" });
+				const text = o.prompt.startsWith("/") ? (s.expandSlash(o.prompt) ?? o.prompt) : o.prompt;
+				void s.prompt(text);
+				return { id: s.id };
+			},
+			async send(id, text, queue) {
+				const s = await getLive(id);
+				const t = text.startsWith("/") ? (s.expandSlash(text) ?? text) : text;
+				if (queue) s.enqueue(t);
+				else void s.prompt(t);
+			},
+			async stop(id) {
+				const s = live.get(id);
+				if (!s || s.status === "idle") return false;
+				s.abort();
+				return true;
+			},
+			status(id) {
+				const s = live.get(id);
+				return s ? { status: s.status, queued: s.queue.length } : undefined;
+			},
+			async btw(id, question) {
+				const s = await getLive(id);
+				const b = s.btw(question);
+				const t0 = Date.now();
+				while (b.status === "running" && Date.now() - t0 < 180_000) await new Promise((r) => setTimeout(r, 200));
+				return { status: b.status, text: b.text, error: b.error };
+			},
+		},
+	};
+	setControlContext(controlCtx);
+
+	/** MCP over Streamable HTTP (stateless, JSON responses). Used by `argon mcp serve` and by HTTP clients. */
+	async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+		const rpcError = (status: number, code: number, message: string) => {
+			res.writeHead(status, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null }));
+		};
+		// Browsers never get in: a web page can't send this request without an Origin header.
+		if (req.headers.origin) return rpcError(403, -32001, "Forbidden origin");
+		const ac = loadSettings().agentControl;
+		const auth = String(req.headers.authorization ?? "");
+		const ok = req.headers["x-argon-token"] === TOKEN || auth === `Bearer ${TOKEN}` || (!!ac.token && auth === `Bearer ${ac.token}`);
+		if (!ok) return rpcError(401, -32001, "Missing or invalid token");
+		if (!ac.enabled) return rpcError(403, -32002, "AI agent control is turned off in Argon. Turn it on in Settings → AI agent control.");
+		if (req.method !== "POST") {
+			res.writeHead(405, { Allow: "POST" }).end();
+			return;
+		}
+		let parsed: unknown;
+		try {
+			parsed = await body(req);
+		} catch {
+			return rpcError(400, -32700, "Parse error");
+		}
+		const mcp = controlMcpServer(controlCtx, VERSION);
+		const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+		res.on("close", () => {
+			void transport.close();
+			void mcp.close();
+		});
+		await mcp.connect(transport);
+		await transport.handleRequest(req, res, parsed);
+	}
+
+	// Optional fixed port for MCP over HTTP (only the desktop app's core opens it).
+	let controlServer: ReturnType<typeof createServer> | undefined;
+	let controlBound = 0;
+	let controlError: string | undefined;
+	function syncControlListener(): void {
+		if (!opts.controlPort) return;
+		const ac = loadSettings().agentControl;
+		const want = ac.enabled && ac.port > 0 ? ac.port : 0;
+		if (want === controlBound && (want === 0 || controlServer)) return;
+		controlServer?.close();
+		controlServer = undefined;
+		controlBound = want;
+		controlError = undefined;
+		if (!want) return;
+		const srv = createServer((req, res) => {
+			const host = (req.headers.host ?? "").toLowerCase();
+			if (host !== `127.0.0.1:${want}` && host !== `localhost:${want}`) return void res.writeHead(403).end("Forbidden host");
+			if (new URL(req.url ?? "/", `http://127.0.0.1:${want}`).pathname !== "/mcp") return void res.writeHead(404).end("Argon MCP: use /mcp");
+			handleMcp(req, res).catch((e) => {
+				if (!res.headersSent) res.writeHead(500).end(String(e?.message ?? e));
+			});
+		});
+		srv.on("error", (e: any) => {
+			controlError = e.code === "EADDRINUSE" ? `Port ${want} is already in use` : e.message;
+			if (controlServer === srv) controlServer = undefined;
+		});
+		srv.listen(want, "127.0.0.1", () => {
+			if (controlBound === want) controlServer = srv;
+			else srv.close();
+		});
+	}
+
+	/** Recommended stdio command for MCP clients: the installed CLI, else node + this core. */
+	function controlCommand(): { command: string; args: string[] } {
+		const exe = join(ROOT, "..", "..", "bin", process.platform === "win32" ? "argon.exe" : "argon");
+		if (existsSync(exe)) return { command: resolve(exe), args: ["mcp", "serve"] };
+		return { command: process.execPath, args: [join(ROOT, "dist", "cli", "main.js"), "mcp", "serve"] };
+	}
+
 	function sessionPayload(s: ArgonSession | undefined, id: string) {
 		const data = s?.data ?? loadSession(id);
 		if (!data) return null;
@@ -195,6 +342,8 @@ export async function startServer(opts: { port?: number; open?: boolean } = {}):
 			status: s?.status ?? "idle",
 			pendingApprovals: s?.pendingApprovals ?? [],
 			pendingQuestions: s?.pendingQuestions ?? [],
+			queue: s?.queued ?? [],
+			btws: s?.btws ?? [],
 			context: s ? s.contextUsage() : null,
 			usage: sessionUsage(id),
 			git: gitInfo(data.meta.cwd),
@@ -223,7 +372,7 @@ export async function startServer(opts: { port?: number; open?: boolean } = {}):
 			running: [...live.values()].filter((x) => x.status !== "idle").map((x) => x.id),
 			limits: limitStatus(),
 			modes: MODES,
-			mcp: mcpStatus(),
+			mcp: connectors(),
 			home: homedir(),
 			cwd: process.cwd(),
 		};
@@ -255,13 +404,26 @@ export async function startServer(opts: { port?: number; open?: boolean } = {}):
 		if (p === "/bootstrap") return send(res, 200, bootstrap());
 		if (p === "/settings" && m === "GET") return send(res, 200, loadSettings());
 		if (p === "/settings" && (m === "PUT" || m === "POST")) {
-			const next = saveSettings(await body(req));
-			void syncMcp().then(() => {
-				for (const s of live.values()) s.refresh();
-				broadcast({ type: "mcp_changed", mcp: mcpStatus() });
-			});
-			for (const s of live.values()) s.refresh();
+			saveSettings(await body(req));
+			const next = ensureControlToken();
+			afterSettings();
 			return send(res, 200, next);
+		}
+		if (p === "/agent-control") {
+			if (m === "POST" && (await body(req)).regenerate) {
+				const s = loadSettings();
+				s.agentControl.token = "";
+				saveSettings(s);
+			}
+			const s = ensureControlToken();
+			const ac = s.agentControl;
+			return send(res, 200, {
+				enabled: ac.enabled,
+				stdio: controlCommand(),
+				token: ac.token,
+				http: { url: ac.port > 0 ? `http://127.0.0.1:${ac.port}/mcp` : null, listening: !!controlServer && controlBound === ac.port, error: controlError, managed: !!opts.controlPort },
+				tools: controlToolList(),
+			});
 		}
 		if (p === "/limits") return send(res, 200, limitStatus());
 		if (p === "/stats") return send(res, 200, computeStats((q("range") as any) ?? "all", loadSettings().general.language));
@@ -434,6 +596,36 @@ export async function startServer(opts: { port?: number; open?: boolean } = {}):
 					void s.prompt(text, b.images ?? []);
 					return send(res, 200, { ok: true });
 				}
+				case "queue": {
+					// POST /queue {text, images} · DELETE /queue/:qid · POST /queue/:qid/send
+					const qid = seg[3];
+					if (!qid && m === "POST") {
+						let text: string = b.text ?? "";
+						const expanded = text.startsWith("/") ? s.expandSlash(text) : null;
+						if (expanded) text = expanded;
+						if (!text.trim() && !(b.images ?? []).length) return send(res, 400, { error: "empty message" });
+						return send(res, 200, s.enqueue(text, b.images ?? []));
+					}
+					if (qid && m === "DELETE") return send(res, 200, { removed: s.unqueue(qid) ?? null });
+					if (qid && seg[4] === "send" && m === "POST") {
+						s.sendQueued(qid);
+						return send(res, 200, { ok: true });
+					}
+					return send(res, 200, s.queued);
+				}
+				case "btw": {
+					// POST /btw {text} · DELETE /btw/:id
+					if (seg[3] && m === "DELETE") {
+						s.dismissBtw(seg[3]);
+						return send(res, 200, { ok: true });
+					}
+					if (m === "POST") {
+						const question = String(b.text ?? "").trim();
+						if (!question) return send(res, 400, { error: "empty question" });
+						return send(res, 200, s.btw(question));
+					}
+					return send(res, 200, s.btws);
+				}
 				case "abort":
 					s.abort();
 					return send(res, 200, { ok: true });
@@ -460,6 +652,21 @@ export async function startServer(opts: { port?: number; open?: boolean } = {}):
 				case "clear":
 					s.clear();
 					return send(res, 200, sessionPayload(s, id));
+				case "prs": {
+					// The session's pull requests with their state, +/- and checks (re-read from GitHub at most once a minute).
+					const all = sessionPrs(s.data.meta);
+					const stale = all.some((x) => !x.checkedAt || Date.now() - x.checkedAt > 60_000);
+					if (all.length && (stale || q("refresh") === "1") && !prRefresh.has(id)) {
+						const job = (async () => {
+							if (!(await githubStatus()).connected) return;
+							const fresh = await prDetails(s.cwd, all.map((x) => x.url || x.number));
+							if (mergePrStatus(s.data.meta, fresh)) s.persist();
+						})().finally(() => prRefresh.delete(id));
+						prRefresh.set(id, job);
+					}
+					await prRefresh.get(id);
+					return send(res, 200, sessionPrs(s.data.meta));
+				}
 				case "gitstate":
 					return send(res, 200, await gitState(s.cwd));
 				case "pr": {
@@ -503,11 +710,11 @@ export async function startServer(opts: { port?: number; open?: boolean } = {}):
 		}
 
 		// customization
-		if (p === "/mcp") return send(res, 200, mcpStatus());
+		if (p === "/mcp") return send(res, 200, connectors());
 		if (seg[0] === "mcp" && seg[1] === "reconnect") {
 			await reconnectMcp(decodeURIComponent(seg[2]));
 			for (const s of live.values()) s.refresh();
-			return send(res, 200, mcpStatus());
+			return send(res, 200, connectors());
 		}
 		if (seg[0] === "agents") {
 			if (m === "GET") return send(res, 200, listAgents(q("cwd") ?? process.cwd(), loadSettings(), true));
@@ -515,20 +722,18 @@ export async function startServer(opts: { port?: number; open?: boolean } = {}):
 			if (m === "DELETE") return send(res, 200, { ok: deleteAgent(decodeURIComponent(seg[1])) });
 		}
 		if (p === "/skills" && m === "POST") {
-			const b = await body(req);
-			const name = String(b.name ?? "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-");
-			if (!name) return send(res, 400, { error: "name required" });
-			const dir = join(paths.skills, name);
-			mkdirSync(dir, { recursive: true });
-			writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${String(b.description ?? "").replace(/\n/g, " ")}\n---\n\n${b.body ?? ""}\n`);
-			return send(res, 200, { ok: true, path: dir });
+			try {
+				return send(res, 200, { ok: true, path: saveSkill(await body(req)) });
+			} catch (e) {
+				return send(res, 400, { error: (e as Error).message });
+			}
 		}
 		if (p === "/commands" && m === "POST") {
-			const b = await body(req);
-			const name = String(b.name ?? "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-");
-			if (!name) return send(res, 400, { error: "name required" });
-			writeFileSync(join(paths.commands, `${name}.md`), `---\ndescription: ${String(b.description ?? "").replace(/\n/g, " ")}\n---\n\n${b.body ?? ""}\n`);
-			return send(res, 200, { ok: true });
+			try {
+				return send(res, 200, { ok: true, file: saveCommand(await body(req)) });
+			} catch (e) {
+				return send(res, 400, { error: (e as Error).message });
+			}
 		}
 		if (p === "/skills") return send(res, 200, listSkills(q("cwd") ?? process.cwd(), loadSettings(), true).map(({ body: _b, ...k }) => k));
 		if (p === "/commands") return send(res, 200, listCommands(q("cwd") ?? process.cwd(), loadSettings()).map(({ body: _b, ...c }) => c));
@@ -560,6 +765,14 @@ export async function startServer(opts: { port?: number; open?: boolean } = {}):
 		}
 		if (u.pathname === "/api/ping") {
 			res.writeHead(200).end("argon " + VERSION);
+			return;
+		}
+		if (u.pathname === "/mcp") {
+			try {
+				await handleMcp(req, res);
+			} catch (e: any) {
+				if (!res.headersSent) send(res, 500, { error: e?.message ?? String(e) });
+			}
 			return;
 		}
 		if (u.pathname.startsWith("/api/")) {
@@ -613,12 +826,13 @@ export async function startServer(opts: { port?: number; open?: boolean } = {}):
 	});
 
 	onUsage(() => broadcast({ type: "limits", limits: limitStatus() }));
-	watchSharedFiles(() => broadcast({ type: "sessions_changed" }), () => {
+	const unwatch = watchSharedFiles(() => broadcast({ type: "sessions_changed" }), () => {
 		loadSettings();
+		afterSettings();
 		broadcast({ type: "settings_changed" });
 	});
 	onSettingsChange(() => broadcast({ type: "settings_changed" }));
-	void syncMcp().then(() => broadcast({ type: "mcp_changed", mcp: mcpStatus() }));
+	void syncMcp().then(() => broadcast({ type: "mcp_changed", mcp: connectors() }));
 	void refreshConnectedModels().then(() => broadcast({ type: "models_changed" }));
 
 	await new Promise<void>((resolveP, reject) => {
@@ -627,12 +841,17 @@ export async function startServer(opts: { port?: number; open?: boolean } = {}):
 	});
 	port = (server.address() as { port: number }).port;
 	url = `http://127.0.0.1:${port}/?t=${TOKEN}`;
+	ensureControlToken();
+	syncControlListener();
 	open();
 	return {
 		url,
 		close: () => {
 			for (const s of live.values()) s.abort();
 			for (const c of clients) c.terminate();
+			controlServer?.close();
+			setControlContext(undefined);
+			unwatch();
 			server.close();
 		},
 	};
@@ -708,21 +927,26 @@ async function favicon(provider: string): Promise<{ type: string; data: Buffer }
 }
 
 /** Watch ~/.argon for changes made by other Argon processes (e.g. the CLI). */
-function watchSharedFiles(onSessions: () => void, onSettings: () => void): void {
+function watchSharedFiles(onSessions: () => void, onSettings: () => void): () => void {
 	const timers: Record<string, NodeJS.Timeout> = {};
 	const later = (k: string, fn: () => void) => {
 		clearTimeout(timers[k]);
 		timers[k] = setTimeout(fn, 150);
 	};
+	const watchers: ReturnType<typeof watch>[] = [];
 	try {
-		watch(paths.home, (_ev, name) => {
+		watchers.push(watch(paths.home, (_ev, name) => {
 			if (name === "settings.json") later("settings", onSettings);
 			if (name === "usage.jsonl") later("usage", () => usageChangedExternally());
-		});
-		watch(paths.sessions, (_ev, name) => {
+		}));
+		watchers.push(watch(paths.sessions, (_ev, name) => {
 			if (name === "index.json") later("sessions", onSessions);
-		});
+		}));
 	} catch {
 		/* watching not supported: changes still show up on the next request */
 	}
+	return () => {
+		for (const w of watchers) w.close();
+		for (const t of Object.values(timers)) clearTimeout(t);
+	};
 }

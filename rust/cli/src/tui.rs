@@ -95,6 +95,10 @@ pub struct App {
     ctrl_c: Option<Instant>,
     warned: (bool, bool),
     quit: bool,
+    /// Messages queued with ctrl+enter (sent by the core when the run ends).
+    queued: usize,
+    /// /btw side questions still being answered.
+    btw_running: Vec<String>,
 }
 
 fn now_ms() -> f64 {
@@ -237,6 +241,7 @@ impl App {
         self.branch = p["git"]["branch"].as_str().map(String::from);
         self.todos = p["todos"].as_array().cloned().unwrap_or_default();
         self.background = p["background"].as_array().cloned().unwrap_or_default();
+        self.queued = p["queue"].as_array().map(|a| a.len()).unwrap_or(0);
         self.running = s(p, "status") != "idle" && !s(p, "status").is_empty();
         if let Some(a) = p["pendingApprovals"].as_array().and_then(|a| a.first()) {
             self.approval = Some((a.clone(), 0));
@@ -291,6 +296,26 @@ impl App {
         }
     }
 
+    /// ctrl+enter: while the agent works the message waits in the core's queue; otherwise it is sent now.
+    fn queue_msg(&mut self, text: String) {
+        if text.trim().is_empty() {
+            return;
+        }
+        let Some(sid) = self.sid.clone().filter(|_| self.running && !text.starts_with('/')) else {
+            return self.submit(text);
+        };
+        self.hist.push(text.clone());
+        self.hist_i = None;
+        match self.c.action(&sid, "queue", json!({ "text": text })) {
+            Ok(_) => {
+                let first = text.lines().next().unwrap_or("").to_string();
+                let l = format!("  {} {}", accent("⧗"), dim(&format!("{} {}", self.t("In coda:", "Queued:"), truncate(&first, self.w().saturating_sub(16)))));
+                self.commit(&[String::new(), l]);
+            }
+            Err(e) => self.notice("error", &e),
+        }
+    }
+
     fn user_block(&mut self, t: &str) {
         let w = self.w();
         let tm = if self.cli("timestamps").as_bool().unwrap_or(true) {
@@ -302,7 +327,13 @@ impl App {
         };
         let mut rows = vec![String::new()];
         for (i, l) in t.split('\n').enumerate() {
-            let left = format!("{}{}", if i == 0 { accent(" ❯ ") } else { "   ".into() }, bold(l));
+            // "- item" lines read as a bulleted list.
+            let trimmed = l.trim_start();
+            let body = match trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+                Some(rest) if !rest.trim().is_empty() => format!("{}{} {}", &l[..l.len() - trimmed.len()], accent("•"), bold(rest)),
+                _ => bold(l),
+            };
+            let left = format!("{}{}", if i == 0 { accent(" ❯ ") } else { "   ".into() }, body);
             let right = if i == 0 && !tm.is_empty() { format!("{tm} ") } else { String::new() };
             for seg in wrap(&left, w.saturating_sub(2 + width(&right))) {
                 let line = pad(&seg, w.saturating_sub(1 + width(&right))) + &right;
@@ -539,6 +570,33 @@ impl App {
                 }
             }
             "background" => self.background = e["processes"].as_array().cloned().unwrap_or_default(),
+            "queue" => {
+                self.queued = e["queue"].as_array().map(|a| a.len()).unwrap_or(0);
+                // The core sent a queued message: show it like a typed one.
+                if let Some(t) = e["sent"]["text"].as_str().map(|t| t.to_string()) {
+                    self.user_block(&t);
+                    self.turn_cost0 = self.cost;
+                    self.out_tok = 0;
+                    self.word = self.t("Elaboro", "Working");
+                }
+            }
+            "btw" => {
+                let b = &e["btw"];
+                let id = s(b, "id").to_string();
+                let st = s(b, "status");
+                if st != "running" && self.btw_running.contains(&id) {
+                    self.btw_running.retain(|x| x != &id);
+                    let mut lines = vec![String::new(), format!("  {} {}", accent("/btw"), bold(&truncate(s(b, "question"), self.w().saturating_sub(12))))];
+                    if st == "error" && s(b, "text").is_empty() {
+                        lines.push(format!("    {}", err(&format!("✖ {}", s(b, "error")))));
+                    } else {
+                        let mut md = Md::new("  │ ");
+                        lines.extend(md.push(s(b, "text")));
+                        lines.extend(md.flush());
+                    }
+                    self.commit(&lines);
+                }
+            }
             "approval_request" => {
                 self.approval = Some((e.clone(), 0));
                 self.scr.bell();
@@ -755,6 +813,12 @@ impl App {
         if running_sa > 0 {
             right = format!("{} {right}", accent(&format!("⑂ {running_sa}")));
         }
+        if !self.btw_running.is_empty() {
+            right = format!("{} {right}", accent(&format!("/btw {}", self.btw_running.len())));
+        }
+        if self.queued > 0 {
+            right = format!("{} {right}", accent(&format!("⧗ {}", self.queued)));
+        }
         if running_bg > 0 {
             right = format!("{} {right}", accent(&format!("▤ {running_bg}")));
         }
@@ -773,6 +837,8 @@ impl App {
             self.t("←→ scegli · invio conferma · y sì · a sempre · n no", "←→ choose · enter confirm · y yes · a always · n no")
         } else if self.picker.is_some() {
             self.t("↑↓ scegli · scrivi per cercare · invio conferma · esc chiudi", "↑↓ choose · type to search · enter confirm · esc close")
+        } else if self.running {
+            self.t("invio:invia ora  │  ctrl+invio:in coda  │  /btw:domanda a parte  │  esc:ferma", "enter:send now  │  ctrl+enter:queue  │  /btw:side question  │  esc:stop")
         } else {
             self.t("shift+tab:modalità  │  esc:ferma  │  /:comandi  │  @:file  │  ctrl+c:esci", "shift+tab:mode  │  esc:stop  │  /:commands  │  @:files  │  ctrl+c:quit")
         };
@@ -913,6 +979,7 @@ impl App {
             c("undo", "Annulla l'ultimo turno", "Undo the last turn"),
             c("todos", "Lista attività", "Task list"),
             c("context", "Uso del contesto", "Context usage"),
+            c("btw", "Domanda a parte: risponde un sub-agente", "Side question: a sub-agent answers"),
             c("model", "Cambia modello", "Change model"),
             c("effort", "Livello di ragionamento", "Reasoning level"),
             c("mode", "Modalità permessi", "Permission mode"),
@@ -1150,6 +1217,14 @@ impl App {
                 let next = MODES[(i + 1) % MODES.len()].0.to_string();
                 self.set_option("mode", &next);
             }
+            // ctrl+enter (some terminals send it as ctrl+j): queue the message for when the agent is done.
+            KeyCode::Enter | KeyCode::Char('j') if ctrl && self.picker.is_none() => {
+                let t: String = self.text.iter().collect();
+                self.text.clear();
+                self.cur = 0;
+                self.suggest = None;
+                self.queue_msg(t);
+            }
             KeyCode::Enter if alt || k.modifiers.contains(KeyModifiers::SHIFT) => self.insert("\n"),
             KeyCode::Enter => {
                 if let Some(p) = &self.picker {
@@ -1341,6 +1416,24 @@ impl App {
                         })
                         .collect();
                     self.pick(Kind::Session, format!("{} «{arg}»", self.t("Risultati per", "Results for")), String::new(), items, "");
+                }
+            }
+            "btw" => {
+                if arg.is_empty() {
+                    let m = self.t("Uso: /btw <domanda> — risponde un sub-agente mentre l'agente lavora", "Usage: /btw <question> — a sub-agent answers while the agent works");
+                    self.notice("info", &m);
+                } else if let Some(id) = self.sid.clone() {
+                    match self.c.action(&id, "btw", json!({ "text": arg })) {
+                        Ok(b) => {
+                            self.btw_running.push(s(&b, "id").to_string());
+                            let l = format!("  {} {}", accent("/btw"), dim(&truncate(&arg, self.w().saturating_sub(12))));
+                            self.commit(&[String::new(), l]);
+                        }
+                        Err(e) => self.notice("error", &e),
+                    }
+                } else {
+                    // No conversation yet: it's simply the first question.
+                    self.submit(arg);
                 }
             }
             "rename" => self.patch_meta(json!({ "title": arg }), "Rinominata", "Renamed"),
@@ -1595,6 +1688,7 @@ impl App {
             ("shift+tab", self.t("cambia modalità permessi", "cycle permission mode")),
             ("esc", self.t("ferma l'agente · chiude i menu", "stop the agent · close menus")),
             ("alt+enter, \\+enter", self.t("nuova riga", "new line")),
+            ("ctrl+enter", self.t("in coda: parte quando l'agente ha finito", "queue: sent when the agent is done")),
             ("↑ ↓", self.t("cronologia · muoversi nei menu", "history · move in menus")),
             ("ctrl+l", self.t("pulisci lo schermo", "clear the screen")),
             ("ctrl+c ×2", self.t("esci", "quit")),
@@ -1835,6 +1929,8 @@ pub fn run(c: Client, opts: Opts) -> Result<(), String> {
         ctrl_c: None,
         warned: (false, false),
         quit: false,
+        queued: 0,
+        btw_running: vec![],
     };
     app.load_settings();
     let boot = app.c.get("/bootstrap")?;

@@ -158,6 +158,19 @@ export interface Settings {
 	};
 	hooks: HookConfig[];
 	environments: Environment[];
+	/** Letting AI agents control Argon through its MCP server (`argon mcp serve`, or HTTP on a fixed port). */
+	agentControl: {
+		/** Off by default: nothing can control Argon until the user turns it on. */
+		enabled: boolean;
+		/** Bearer token for MCP over HTTP (generated when control is turned on). */
+		token: string;
+		/** Fixed local port for MCP over HTTP (0 = only through `argon mcp serve`). */
+		port: number;
+		/** Argon's own agent gets the same tools (the built-in "Argon" connector). */
+		builtin: boolean;
+		/** What the tools may touch. */
+		allow: { settings: boolean; agents: boolean; connectors: boolean; sessions: boolean; security: boolean };
+	};
 	/** Argon CLI preferences, independent from the GUI (only usage limits are shared). */
 	cli: {
 		showBanner: boolean;
@@ -241,6 +254,7 @@ export const DEFAULT_SETTINGS: Settings = {
 	appearance: { seed: "#7c4dff", preset: "argon", scheme: "tonalSpot", contrast: "standard", radius: "standard", motion: "full", scale: 100 },
 	hooks: [],
 	environments: [],
+	agentControl: { enabled: false, token: "", port: 0, builtin: true, allow: { settings: true, agents: true, connectors: true, sessions: true, security: false } },
 	cli: { showBanner: true, showThinking: false, vimMode: false, statusBar: true, accent: "violet", language: "it", sessionScope: "environment", animations: true, notifyLimits: true, timestamps: true },
 };
 

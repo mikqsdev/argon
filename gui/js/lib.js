@@ -230,7 +230,7 @@ export function popover(anchor, html, opts = {}) {
 	if (opts.focus !== false) p.querySelector("input")?.focus();
 	return p;
 }
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && menuStack.length) closePop(menuStack.length - 1); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && menuStack.length) { e.preventDefault(); closePop(menuStack.length - 1); } });
 
 export function modal(html, onMount) {
 	const bg = el(`<div class="modal-bg"><div class="modal">${html}</div></div>`);

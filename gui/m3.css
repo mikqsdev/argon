@@ -55,8 +55,41 @@ select.m3-native { display: none !important; }
 .pr-btn:hover:not(:disabled) { border-radius: var(--r-s); }
 .pr-btn:disabled { background: color-mix(in srgb, var(--on-surface) 12%, transparent); color: color-mix(in srgb, var(--on-surface) 40%, transparent); cursor: not-allowed; }
 .rp-changes { display: flex; align-items: center; gap: 8px; }
+.rp-changes > .ms { color: var(--on-surface-variant); font-size: 18px; }
 .rp-changes .stats { margin-left: auto; font-family: var(--mono); font-size: 12px; }
-.pr-list a { color: var(--primary); text-decoration: none; font-size: 12.5px; display: flex; gap: 6px; align-items: center; padding: 3px 0; }
+.rp-changes.sep { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--outline-variant); }
+.rp-pr-act { display: flex; justify-content: flex-end; margin-top: 8px; }
+
+/* Pull requests of the session (right panel) and on sessions in the sidebar: GitHub's colours per state. */
+:root { --git-merged: #b392f0; }
+:root[data-theme="light"] { --git-merged: #8250df; }
+.git-ico { flex: none; display: block; }
+.git-ico.open, .s-pr.open { color: var(--success); }
+.git-ico.merged, .s-pr.merged { color: var(--git-merged); }
+.git-ico.closed, .s-pr.closed { color: var(--error); }
+.git-ico.draft, .s-pr.draft { color: var(--outline); }
+/* Rows reach 8px into the section's 14px padding: radius = section radius − 6px (concentric). */
+.pr-item, .rp-fold, .bg-item { position: relative; display: flex; align-items: center; gap: 10px; margin: 0 -8px; padding: 6px 8px; border-radius: calc(var(--r-l) - 6px); min-width: 0; }
+.pr-item, .rp-fold { cursor: pointer; }
+.pr-item::before, .rp-fold::before { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--on-surface); opacity: 0; transition: opacity var(--fast); pointer-events: none; }
+.pr-item:hover::before, .rp-fold:hover::before { opacity: 0.08; }
+.pr-item { align-items: flex-start; }
+.pr-ico { padding-top: 1px; }
+.pr-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pr-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 18px; }
+.pr-s { display: flex; gap: 6px; font: 12px/16px var(--font); color: var(--on-surface-variant); font-variant-numeric: tabular-nums; }
+.pr-side { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: -4px -4px -4px 0; }
+.pr-side .icon-btn { width: 26px; height: 26px; color: var(--on-surface-variant); }
+.pr-side .icon-btn .ms { font-size: 18px; }
+.pr-ck { display: grid; place-items: center; height: 16px; }
+.pr-ck .ms { font-size: 14px; }
+.pr-ck.pass { color: var(--success); } .pr-ck.fail { color: var(--error); } .pr-ck.pending { color: var(--on-surface-variant); }
+.rp-fold { width: calc(100% + 16px); text-align: left; font-size: 12.5px; color: var(--on-surface-variant); }
+.rp-fold .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-fold > .ms { font-size: 18px; transition: transform var(--med) var(--spring); }
+.rp-fold[data-prfold] > .ms:first-child { margin-left: -1px; }
+.rp-fold.open[data-prfold] > .ms:first-child, .rp-fold.open > .ms.end { transform: rotate(90deg); }
+.rp-fold .dim { color: var(--on-surface-variant); font-size: 12px; }
 .pr-files { max-height: 160px; overflow-y: auto; background: var(--surface-container); border-radius: var(--r-m); padding: 8px 12px; font: 12px var(--mono); color: var(--on-surface-variant); }
 .pr-files div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pr-files .st { display: inline-block; width: 22px; color: var(--primary); font-weight: 700; }
@@ -102,12 +135,16 @@ select.m3-native { display: none !important; }
 .usage-kpis .k b { display: block; font: 700 22px var(--font); font-stretch: 112%; }
 .usage-kpis .k small { color: var(--on-surface-variant); }
 
-/* background processes in the right panel */
-.bg-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12.5px; }
-.bg-row code { font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
-.bg-row .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex: none; }
-.bg-row .dot.off { background: var(--outline); }
-.bg-row button { width: 26px; height: 26px; }
+/* background tasks in the right panel */
+.bg-item > .ms { font-size: 18px; color: var(--on-surface-variant); }
+.bg-item .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.bg-item:not(.running) .t { color: var(--on-surface-variant); }
+.bg-item .el { flex: none; font: 12px var(--font); color: var(--on-surface-variant); font-variant-numeric: tabular-nums; }
+.bg-item .el.bad { color: var(--error); }
+.bg-stop { flex: none; display: grid; place-items: center; width: 24px; height: 24px; margin: -4px -4px -4px 0; border-radius: 50%; position: relative; }
+.bg-stop::before { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--on-surface); opacity: 0; transition: opacity var(--fast); }
+.bg-stop:hover::before { opacity: 0.1; }
+.bg-stop i { width: 9px; height: 9px; border-radius: 2px; background: var(--on-surface); }
 
 /* approval outside environment */
 .card .why { display: inline-flex; align-items: center; gap: 6px; font: 600 12px var(--font); color: var(--on-tertiary-container); background: var(--tertiary-container); border-radius: var(--r-full); padding: 3px 10px; margin-bottom: 8px; }
@@ -126,3 +163,28 @@ a:not(.btn), .md a { text-decoration-color: color-mix(in srgb, var(--primary) 60
 /* hover layer and ripple used the text colour, now transparent: give them the primary colour */
 .btn:not(.pri):not(.tonal):not(.danger):not(.danger-fill)::before,
 .btn:not(.pri):not(.tonal):not(.danger):not(.danger-fill) .ripple { background: var(--primary); }
+
+/* Sidebar: PR badge on a session, and date groups that fold like folders. */
+.s-pr { flex: none; display: inline-flex; align-items: center; gap: 3px; font: 600 12px var(--font); font-variant-numeric: tabular-nums; }
+.s-grp-body { display: grid; grid-template-rows: 1fr; transition: grid-template-rows var(--med) var(--spring); }
+.s-grp.collapsed .s-grp-body { grid-template-rows: 0fr; }
+.s-grp-in { min-height: 0; overflow: hidden; }
+button.s-group { display: flex; align-items: center; gap: 2px; width: auto; max-width: 100%; text-align: left; border-radius: var(--r-full); margin: 8px 0 2px 8px; padding: 4px 8px; }
+button.s-group:hover { color: var(--on-surface); background: color-mix(in srgb, var(--on-surface) 8%, transparent); }
+button.s-group .ms { font-size: 18px; transition: transform var(--med) var(--spring); }
+.s-grp.collapsed button.s-group .ms { transform: rotate(-90deg); }
+.sessions.stagger .s-grp-in > * { animation: rise 520ms var(--spring) both; }
+
+/* Settings → AI agent control */
+.dim-group { opacity: 0.55; }
+.snip { position: relative; margin-top: 10px; background: var(--surface-container-high, var(--surface-high)); border-radius: var(--r-m); }
+.snip pre { margin: 0; padding: 12px 48px 12px 14px; font: 12.5px/19px var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.snip [data-copy] { position: absolute; top: 6px; right: 6px; width: 32px; height: 32px; }
+.snip [data-copy] .ms { font-size: 18px; }
+.tool-grp { padding: 10px 20px 6px; }
+.tool-grp + .tool-grp { border-top: 1px solid var(--outline-variant); }
+.tool-grp.off { opacity: 0.45; }
+.tg-h { font: 500 12px var(--font); color: var(--on-surface-variant); letter-spacing: 0.4px; margin-bottom: 4px; }
+.tg-row { display: flex; align-items: center; gap: 10px; padding: 3px 0; font-size: 13px; }
+.tg-row code { font: 12px var(--mono); color: var(--primary); min-width: 170px; }
+.tg-row span:not(.badge) { color: var(--on-surface-variant); }

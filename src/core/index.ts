@@ -17,3 +17,4 @@ export * from "./agents.js";
 export * from "./github.js";
 export * from "./importer.js";
 export * from "./background.js";
+export * from "./control.js";
