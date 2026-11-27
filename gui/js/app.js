@@ -1462,7 +1462,7 @@ export function limitRowHtml(label, w, unit, enabled) {
 	const reset = w.resetsAt
 		? `${t("resets")} ${new Date(w.resetsAt).toLocaleString(lang(), new Date(w.resetsAt).toDateString() === new Date().toDateString() ? { hour: "2-digit", minute: "2-digit" } : { weekday: "short", hour: "2-digit", minute: "2-digit" })}`
 		: t("startsFirst");
-	return `<div class="lim"><div class="top"><span>${label}</span><span class="r">${reset}${enabled ? ` · ${pct}%` : ""}</span></div>
+	return `<div class="lim"><div class="top"><span>${label}</span><span class="r">${reset}${enabled ? `&nbsp;·&nbsp;${pct}%` : ""}</span></div>
 		<div class="bar ${cls}"><i style="width:${enabled ? Math.min(100, w.percent) : 0}%"></i></div>
 		<div class="amt">${fmtAmount(w.used, unit)}${enabled ? ` / ${fmtAmount(w.limit, unit)}` : ""}</div></div>`;
 }

@@ -4,7 +4,7 @@ use crate::ansi::*;
 use crate::api::{f, s, Client};
 use crate::md::Md;
 use crate::screen::{Cursor, Screen};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -275,6 +275,7 @@ impl App {
         if text.trim().is_empty() {
             return;
         }
+        self.scr.scroll_to_bottom();
         self.hist.push(text.clone());
         self.hist_i = None;
         if text.starts_with('/') && self.command(&text) {
@@ -1302,11 +1303,17 @@ impl App {
             KeyCode::PageUp => {
                 if let Some(p) = self.picker.as_mut() {
                     p.sel = p.sel.saturating_sub(10);
+                } else {
+                    let n = self.scr.page();
+                    self.scr.scroll_by(n);
                 }
             }
             KeyCode::PageDown => {
                 if let Some(p) = self.picker.as_mut() {
                     p.sel += 10;
+                } else {
+                    let n = self.scr.page();
+                    self.scr.scroll_by(-n);
                 }
             }
             KeyCode::Left => self.cur = self.cur.saturating_sub(1),
@@ -1669,7 +1676,10 @@ impl App {
         let _ = crossterm::terminal::disable_raw_mode();
         let _ = crate::core::run_ts(args);
         let _ = crossterm::terminal::enable_raw_mode();
-        println!();
+        // the UI lives on the alternate screen: let the command's output be read before going back
+        print!("\r\n{}", dim(&self.t("Premi un tasto per tornare ad Argon", "Press any key to return to Argon")));
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        while !matches!(event::read(), Ok(Event::Key(k)) if k.kind == KeyEventKind::Press) {}
         self.scr.start();
         self.load_settings();
         if let Ok(m) = self.c.get("/models") {
@@ -1995,6 +2005,15 @@ pub fn run(c: Client, opts: Opts) -> Result<(), String> {
                 Ok(Event::Resize(w, h)) => {
                     app.scr.resize(w as usize, h as usize);
                 }
+                // the wheel scrolls the transcript (drawn by the screen itself); other mouse events need no redraw
+                Ok(Event::Mouse(m)) => {
+                    match m.kind {
+                        MouseEventKind::ScrollUp => app.scr.scroll_by(3),
+                        MouseEventKind::ScrollDown => app.scr.scroll_by(-3),
+                        _ => {}
+                    }
+                    continue;
+                }
                 _ => {}
             }
             dirty = true;
@@ -2013,6 +2032,7 @@ pub fn run(c: Client, opts: Opts) -> Result<(), String> {
         app.abort();
     }
     app.scr.stop();
+    app.scr.print_transcript();
     let _ = crossterm::execute!(std::io::stdout(), event::DisableBracketedPaste);
     let _ = crossterm::terminal::disable_raw_mode();
     if let Some(id) = &app.sid {
